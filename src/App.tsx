@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
-import { fetchJobStatus, resolveApiAssetUrl, startProcessingJob } from "./lib/api";
+import { fetchJobStatus, resolveApiAssetUrl, startProcessingJob, startProcessingUrlJob } from "./lib/api";
 
 export interface AudioFile {
   id: string;
@@ -62,6 +62,7 @@ export interface AudioFile {
 export interface ConversionSettings {
   format: string;
   sensorType: "beep" | "silence" | "faaa";
+  audioOnly: boolean;
   normalize: boolean;
   compress: boolean;
   compressionLevel: "low" | "medium" | "high" | "extreme";
@@ -76,6 +77,7 @@ export default function App() {
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
+    audioOnly: true,
     normalize: false,
     compress: false,
     compressionLevel: "medium",
@@ -98,18 +100,48 @@ export default function App() {
     setFiles((prev) => [...prev, ...audioFiles]);
   };
 
-  const handleUrlAdded = (url: string, filename: string) => {
-    const audioFile: AudioFile = {
-      id: `${Date.now()}-url`,
-      name: filename,
-      size: 0,
-      type: "audio/unknown",
-      status: "error",
-      progress: 100,
-      url,
-      errorMessage: "URL downloads are not wired to the processing API yet.",
-    };
-    setFiles((prev) => [...prev, audioFile]);
+  const handleUrlAdded = async (options: {
+    url: string;
+  }) => {
+    try {
+      const queued = await startProcessingUrlJob({
+        url: options.url,
+        audioOnly: settings.audioOnly,
+        playlist: false,
+        format: settings.format,
+        sensorType: settings.sensorType,
+      });
+
+      const queuedFiles: AudioFile[] = queued.jobs.map((job, index) => ({
+        id: `${Date.now()}-url-${index}-${job.job_id}`,
+        name: job.filename || "Remote media",
+        size: 0,
+        type: settings.audioOnly ? "audio/unknown" : "video/unknown",
+        status: "processing",
+        progress: 12,
+        url: job.source_url || options.url,
+        requestedFormat: settings.format,
+        serverJobId: job.job_id,
+      }));
+
+      setFiles((prev) => [...prev, ...queuedFiles]);
+
+      queuedFiles.forEach((queuedFile) => {
+        if (!queuedFile.serverJobId) {
+          return;
+        }
+
+        void pollJobUntilComplete(queuedFile.id, queuedFile.serverJobId).catch((error) => {
+          updateFile(queuedFile.id, {
+            status: "error",
+            progress: 100,
+            errorMessage: error instanceof Error ? error.message : "URL processing failed",
+          });
+        });
+      });
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("URL processing failed");
+    }
   };
 
   const updateFile = (id: string, changes: Partial<AudioFile>) => {
@@ -129,6 +161,8 @@ export default function App() {
           progress: 100,
           transcription: job.result.transcription,
           safetyReport: job.result.safety_report,
+          previewUrl: resolveApiAssetUrl(job.result.source_url),
+          type: job.result.source_mime_type,
           outputPreviewUrl: resolveApiAssetUrl(job.result.preview_url),
           outputPreviewMimeType: job.result.preview_mime_type,
           outputUrl: resolveApiAssetUrl(job.result.output_url),
@@ -322,64 +356,66 @@ export default function App() {
 
       <div className="container mx-auto flex-1 px-6 py-8">
         {activePage === "workspace" ? (
-          <Tabs
-            value={activeWorkspaceTab}
-            onValueChange={(value) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
-            className="space-y-6"
-          >
-            <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
-              <TabsTrigger
-                value="upload-media"
-                className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
-              >
-                <Settings className="mr-2 w-4 h-4" />
-                Upload Media Files
-              </TabsTrigger>
-              <TabsTrigger
-                value="upload-url"
-                className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
-              >
-                <Link className="mr-2 w-4 h-4" />
-                Upload via Url
-              </TabsTrigger>
-            </TabsList>
+          <div className="space-y-6">
+            <Tabs
+              value={activeWorkspaceTab}
+              onValueChange={(value) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
+              className="space-y-6"
+            >
+              <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
+                <TabsTrigger
+                  value="upload-media"
+                  className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
+                >
+                  <Settings className="mr-2 w-4 h-4" />
+                  Upload Media Files
+                </TabsTrigger>
+                <TabsTrigger
+                  value="upload-url"
+                  className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
+                >
+                  <Link className="mr-2 w-4 h-4" />
+                  Upload via Url
+                </TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="upload-media" className="space-y-6">
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="space-y-6 lg:col-span-2">
-                  <FileUploadZone
-                    onFilesAdded={handleFilesAdded}
-                  />
+              <TabsContent value="upload-media" className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="space-y-6 lg:col-span-2">
+                    <FileUploadZone
+                      onFilesAdded={handleFilesAdded}
+                    />
+                  </div>
+
+                  <div className="space-y-6">
+                    <FormatSelector
+                      settings={settings}
+                      onSettingsChange={setSettings}
+                    />
+                  </div>
                 </div>
+              </TabsContent>
 
-                <div className="space-y-6">
-                  <FormatSelector
-                    settings={settings}
-                    onSettingsChange={setSettings}
-                  />
-                </div>
-              </div>
-
-              {files.length > 0 && (
-                <ProcessingQueue
-                  files={files}
-                  onStartProcessing={handleStartProcessing}
-                  onRemoveFile={handleRemoveFile}
-                  onClearCompleted={handleClearCompleted}
-                  onToggleExpanded={handleToggleExpanded}
-                  onDownloadFile={handleDownloadFile}
+              <TabsContent value="upload-url">
+                <DownloadSection
+                  settings={settings}
+                  onSettingsChange={setSettings}
+                  onUrlAdded={handleUrlAdded}
                 />
-              )}
-            </TabsContent>
+              </TabsContent>
+            </Tabs>
 
-            <TabsContent value="upload-url">
-              <DownloadSection
-                settings={settings}
-                onSettingsChange={setSettings}
-                onUrlAdded={handleUrlAdded}
+            {files.length > 0 && (
+              <ProcessingQueue
+                files={files}
+                onStartProcessing={handleStartProcessing}
+                onRemoveFile={handleRemoveFile}
+                onClearCompleted={handleClearCompleted}
+                onToggleExpanded={handleToggleExpanded}
+                onDownloadFile={handleDownloadFile}
               />
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         ) : (
           <SupportedLanguagesPage />
         )}

@@ -11,3 +11,4 @@ seaborn
 fastapi
 uvicorn
 python-multipart
+yt-dlp

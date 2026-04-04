@@ -9,6 +9,24 @@ export interface ProcessingApiSettings {
   sensorType: "beep" | "silence" | "faaa";
 }
 
+export interface UrlProcessingApiSettings extends ProcessingApiSettings {
+  url: string;
+  audioOnly: boolean;
+  playlist: boolean;
+}
+
+export interface UrlProcessingStartJob {
+  job_id: string;
+  filename: string;
+  source_url: string;
+}
+
+export interface UrlProcessingStartResponse {
+  jobs: UrlProcessingStartJob[];
+  total: number;
+  playlist_title: string;
+}
+
 export interface ProcessingJobResult {
   transcription: {
     segments: Array<{
@@ -29,6 +47,9 @@ export interface ProcessingJobResult {
     not_safe_prob: number;
     safe_prob: number;
   }>;
+  source_url: string;
+  source_filename: string;
+  source_mime_type: string;
   output_url: string;
   output_filename: string;
   output_mime_type: string;
@@ -95,6 +116,29 @@ export async function startProcessingJob(file: File, settings: ProcessingApiSett
   }
 
   return response.json() as Promise<{ job_id: string }>;
+}
+
+export async function startProcessingUrlJob(settings: UrlProcessingApiSettings) {
+  const response = await fetch(toApiUrl("/api/process-url"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url: settings.url,
+      output_format: settings.format,
+      censor_type: settings.sensorType,
+      audio_only: settings.audioOnly,
+      playlist: settings.playlist,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Failed to start URL processing job");
+  }
+
+  return response.json() as Promise<UrlProcessingStartResponse>;
 }
 
 export async function fetchJobStatus(jobId: string) {

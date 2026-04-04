@@ -3,30 +3,41 @@ import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Switch } from './ui/switch';
 import { Alert, AlertDescription } from './ui/alert';
-import { Download, Link, Youtube, Music, Info } from 'lucide-react';
+import { Download, Link, Info } from 'lucide-react';
 import type { ConversionSettings } from '../App';
 import { FormatSelector } from './FormatSelector';
+import { toast } from 'sonner';
 
 interface DownloadSectionProps {
   settings: ConversionSettings;
   onSettingsChange: (settings: ConversionSettings) => void;
-  onUrlAdded: (url: string, filename: string) => void;
+  onUrlAdded: (options: {
+    url: string;
+  }) => Promise<void>;
 }
 
 export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: DownloadSectionProps) {
   const [url, setUrl] = useState('');
-  const [audioOnly, setAudioOnly] = useState(true);
-  const [playlist, setPlaylist] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleDownload = () => {
-    if (url.trim()) {
-      const filename = url.includes('youtube.com') || url.includes('youtu.be')
-        ? 'YouTube Audio Download'
-        : 'Audio Download';
-      onUrlAdded(url, filename);
+  const handleDownload = async () => {
+    if (!url.trim() || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await onUrlAdded({
+        url: url.trim(),
+      });
       setUrl('');
+    } catch (error) {
+      toast.error('Failed to start URL processing', {
+        description: error instanceof Error ? error.message : 'Could not process the supplied URL.',
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -62,44 +73,21 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                     placeholder="https://www.youtube.com/watch?v=..."
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleDownload()}
+                    onKeyDown={(e) => e.key === 'Enter' && void handleDownload()}
                     className="bg-slate-950 border-slate-700 text-slate-200 pl-10"
                   />
                 </div>
                 <Button
-                  onClick={handleDownload}
-                  disabled={!url.trim()}
+                  onClick={() => void handleDownload()}
+                  disabled={!url.trim() || isSubmitting}
                   className="bg-violet-600 hover:bg-violet-700 text-white"
                 >
                   <Download className="w-4 h-4 mr-2" />
-                  Download
+                  {isSubmitting ? 'Starting...' : 'Download'}
                 </Button>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/50 border border-slate-800">
-                <div className="flex items-center gap-3">
-                  <Music className="w-4 h-4 text-violet-400" />
-                  <div>
-                    <Label className="text-slate-300 cursor-pointer">Audio Only</Label>
-                    <p className="text-xs text-slate-500">Extract audio track</p>
-                  </div>
-                </div>
-                <Switch checked={audioOnly} onCheckedChange={setAudioOnly} />
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/50 border border-slate-800">
-                <div className="flex items-center gap-3">
-                  <Youtube className="w-4 h-4 text-violet-400" />
-                  <div>
-                    <Label className="text-slate-300 cursor-pointer">Playlist</Label>
-                    <p className="text-xs text-slate-500">Download all videos</p>
-                  </div>
-                </div>
-                <Switch checked={playlist} onCheckedChange={setPlaylist} />
-              </div>
-            </div>
           </div>
         </Card>
 
@@ -134,7 +122,7 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
 
       {/* Right Column - Format Settings */}
       <div>
-        <FormatSelector settings={settings} onSettingsChange={onSettingsChange} />
+        <FormatSelector settings={settings} onSettingsChange={onSettingsChange} showAudioOnly />
       </div>
     </div>
   );
