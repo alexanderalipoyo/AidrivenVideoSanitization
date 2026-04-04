@@ -54,13 +54,6 @@ VBW_CACHE_PATH = DATA_DIR / "vbw_classify.csv"
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac", ".wma"}
-FALLBACK_PROFANITY_MAP = {
-    "damn": "English",
-    "hell": "English",
-    "shit": "English",
-    "fuck": "English",
-    "bitch": "English",
-}
 PUNCTUATION_TO_STRIP = " \t\r\n.,!?;:\"'`()[]{}<>-_"
 CENSOR_SOUND_FILES = {
     "faaa": SOUND_DIR / "faaa.mp3",
@@ -134,17 +127,6 @@ def load_whisper_model() -> Any:
     return WHISPER_MODEL
 
 
-def ensure_profanity_cache() -> Path:
-    if VBW_CACHE_PATH.exists():
-        return VBW_CACHE_PATH
-
-    lines = ["word,language"]
-    lines.extend(f"{word},{language}" for word, language in FALLBACK_PROFANITY_MAP.items())
-    VBW_CACHE_PATH.write_text("\n".join(lines), encoding="utf-8")
-
-    return VBW_CACHE_PATH
-
-
 def load_profanity_map_from_directory(directory_path: Path) -> dict[str, str]:
     profanity_map: dict[str, str] = {}
 
@@ -171,6 +153,36 @@ def load_profanity_map_from_directory(directory_path: Path) -> dict[str, str]:
     return profanity_map
 
 
+def load_profanity_map_from_file(file_path: Path, default_language: str) -> dict[str, str]:
+    profanity_map: dict[str, str] = {}
+
+    if not file_path.exists():
+        return profanity_map
+
+    with file_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        saw_language_column = False
+        for row in reader:
+            if not row:
+                continue
+
+            word = str(row[0]).strip().lower()
+            if not word or word == "word":
+                continue
+
+            language = default_language
+            if len(row) > 1 and row[1]:
+                saw_language_column = True
+                language = str(row[1]).strip() or default_language
+
+            profanity_map[word] = language
+
+    if profanity_map and not saw_language_column:
+        return {word: default_language for word in profanity_map}
+
+    return profanity_map
+
+
 def load_profanity_map() -> dict[str, str]:
     global PROFANITY_MAP
     if PROFANITY_MAP is not None:
@@ -183,31 +195,7 @@ def load_profanity_map() -> dict[str, str]:
         profanity_map = load_profanity_map_from_directory(PROFANITY_CSV_DIR)
 
         if not profanity_map:
-            profanity_map = {}
-            cache_path = ensure_profanity_cache()
-            with cache_path.open("r", encoding="utf-8", newline="") as handle:
-                reader = csv.reader(handle)
-                saw_language_column = False
-                for row in reader:
-                    if not row:
-                        continue
-                    word = str(row[0]).strip().lower()
-                    if not word or word == "word":
-                        continue
-                    if len(row) > 1 and row[1]:
-                        saw_language_column = True
-                        language = str(row[1]).strip()
-                    else:
-                        language = "VBW"
-                    profanity_map[word] = language
-
-            if not profanity_map:
-                profanity_map = dict(FALLBACK_PROFANITY_MAP)
-            elif not saw_language_column:
-                profanity_map = {
-                    word: (language or "VBW")
-                    for word, language in profanity_map.items()
-                }
+            profanity_map = load_profanity_map_from_file(VBW_CACHE_PATH, default_language="VBW")
 
         PROFANITY_MAP = profanity_map
         return PROFANITY_MAP
