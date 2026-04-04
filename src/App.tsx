@@ -11,12 +11,11 @@ import { FormatSelector } from "./components/FormatSelector";
 import { PresetCards } from "./components/PresetCards";
 import { ProcessingQueue } from "./components/ProcessingQueue";
 import { DownloadSection } from "./components/DownloadSection";
-import { BatchProcessor } from "./components/BatchProcessor";
 import {
   AudioWaveform,
+  Link,
   Languages,
   Settings,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
@@ -73,6 +72,7 @@ export interface ConversionSettings {
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"upload-media" | "upload-url">("upload-media");
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
@@ -322,32 +322,29 @@ export default function App() {
 
       <div className="container mx-auto flex-1 px-6 py-8">
         {activePage === "workspace" ? (
-          <Tabs defaultValue="convert" className="space-y-6">
-            <TabsList className="hidden border border-slate-800 bg-slate-900/50">
+          <Tabs
+            value={activeWorkspaceTab}
+            onValueChange={(value) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
+            className="space-y-6"
+          >
+            <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
               <TabsTrigger
-                value="convert"
-                className="data-[state=active]:bg-violet-600"
+                value="upload-media"
+                className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
               >
                 <Settings className="mr-2 w-4 h-4" />
-                Convert Files
+                Upload Media Files
               </TabsTrigger>
               <TabsTrigger
-                value="download"
-                className="data-[state=active]:bg-violet-600"
+                value="upload-url"
+                className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
               >
-                <AudioWaveform className="mr-2 w-4 h-4" />
-                Download Audio
-              </TabsTrigger>
-              <TabsTrigger
-                value="batch"
-                className="data-[state=active]:bg-violet-600"
-              >
-                <Sparkles className="mr-2 w-4 h-4" />
-                Batch Process
+                <Link className="mr-2 w-4 h-4" />
+                Upload via Url
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="convert" className="space-y-6">
+            <TabsContent value="upload-media" className="space-y-6">
               <div className="grid gap-6 lg:grid-cols-3">
                 <div className="space-y-6 lg:col-span-2">
                   <FileUploadZone
@@ -375,19 +372,11 @@ export default function App() {
               )}
             </TabsContent>
 
-            <TabsContent value="download">
+            <TabsContent value="upload-url">
               <DownloadSection
                 settings={settings}
                 onSettingsChange={setSettings}
                 onUrlAdded={handleUrlAdded}
-              />
-            </TabsContent>
-
-            <TabsContent value="batch">
-              <BatchProcessor
-                settings={settings}
-                onSettingsChange={setSettings}
-                onFilesAdded={handleFilesAdded}
               />
             </TabsContent>
           </Tabs>
