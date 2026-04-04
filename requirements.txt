@@ -1,0 +1,13 @@
+openai-whisper
+pydub
+torch
+torchaudio
+pandas
+fuzzywuzzy
+python-Levenshtein
+moviepy
+matplotlib
+seaborn
+fastapi
+uvicorn
+python-multipart
