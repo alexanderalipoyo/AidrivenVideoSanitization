@@ -62,6 +62,7 @@ WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 VIDEO_EXTENSIONS = VIDEO_EXTENSIONS | {".webm"}
 ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac", ".wma"}
+SUPPORTED_AUDIO_OUTPUT_FORMATS = {"mp3", "wav", "flac", "ogg", "aac", "m4a"}
 PUNCTUATION_TO_STRIP = " \t\r\n.,!?;:\"'`()[]{}<>-_"
 CENSOR_SOUND_FILES = {
     "faaa": SOUND_DIR / "faaa.mp3",
@@ -94,6 +95,8 @@ class JobState:
     input_mime_type: str
     requested_format: str
     censor_type: str
+    audio_only: bool = False
+    audio_format: str = "mp3"
     status: str = "queued"
     progress: float = 0.0
     error: str | None = None
@@ -105,15 +108,24 @@ class UrlProcessingRequest(BaseModel):
     output_format: str = "mp4"
     censor_type: str = "beep"
     audio_only: bool = True
+    audio_format: str = "mp3"
     playlist: bool = False
 
 
-def build_safe_filename_stem(value: str, fallback: str) -> str:
+def build_safe_filename_stem(value: str, fallback: str, max_length: int = 80) -> str:
     cleaned = "".join(
         character if character.isalnum() or character in {" ", "-", "_", "."} else "_"
         for character in value.strip()
     ).strip(" ._")
-    return cleaned[:80] or fallback
+    return cleaned[:max_length] or fallback
+
+
+def build_safe_filename_token(value: str, fallback: str, max_length: int = 24) -> str:
+    cleaned = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in value.strip()
+    ).strip("._-")
+    return cleaned[:max_length] or fallback
 
 
 JOBS: dict[str, JobState] = {}
@@ -145,6 +157,11 @@ def validate_processing_options(output_format: str, censor_type: str) -> None:
 
     if censor_type not in {"beep", "silence", *CENSOR_SOUND_FILES.keys()}:
         raise HTTPException(status_code=400, detail="Unsupported censor type")
+
+
+def validate_audio_output_format(audio_format: str) -> None:
+    if audio_format not in SUPPORTED_AUDIO_OUTPUT_FORMATS:
+        raise HTTPException(status_code=400, detail="Unsupported audio format")
 
 
 def validate_remote_media_url(media_url: str) -> str:
@@ -236,7 +253,16 @@ def download_media_from_url(
         raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
 
     job = get_job(job_id)
-    output_template = str(job.input_path.parent / "%(title).180B [%(id)s].%(ext)s")
+    job_dir = job.input_path.parent
+    fallback_stem = build_safe_filename_stem(job.filename, "download", max_length=48)
+
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}) as preview_downloader:
+        preview_metadata = preview_downloader.extract_info(media_url, download=False)
+
+    media_title = str(preview_metadata.get("title") or job.filename).strip() or job.filename
+    media_id = build_safe_filename_token(str(preview_metadata.get("id") or job_id), job_id[:12])
+    safe_stem = build_safe_filename_stem(media_title, fallback_stem, max_length=48)
+    output_template = str(job_dir / f"{safe_stem}-{media_id}.%(ext)s")
     ydl_options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -267,10 +293,9 @@ def download_media_from_url(
         )
 
     with yt_dlp.YoutubeDL(ydl_options) as downloader:
-        metadata = downloader.extract_info(media_url, download=True)
+        downloader.extract_info(media_url, download=True)
 
-    downloaded_path = pick_downloaded_media_file(job.input_path.parent)
-    media_title = str(metadata.get("title") or downloaded_path.stem).strip() or downloaded_path.name
+    downloaded_path = pick_downloaded_media_file(job_dir)
     return downloaded_path, guess_media_mime_type(downloaded_path), media_title
 
 
@@ -528,6 +553,14 @@ def render_custom_censor_sound(sound_name: str, duration_ms: int) -> AudioSegmen
     return repeated[:duration_ms]
 
 
+def resolve_audio_export_settings(audio_format: str) -> tuple[str, list[str] | None]:
+    if audio_format == "aac":
+        return "adts", None
+    if audio_format == "m4a":
+        return "mp4", ["-c:a", "aac"]
+    return audio_format, None
+
+
 def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_type: str, output_path: Path, output_format: str) -> None:
     source_audio = AudioSegment.from_file(str(input_path))
     sanitized_audio = AudioSegment.empty()
@@ -550,7 +583,11 @@ def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_typ
         previous_end_ms = end_ms
 
     sanitized_audio += source_audio[previous_end_ms:]
-    sanitized_audio.export(str(output_path), format=output_format)
+    export_format, export_parameters = resolve_audio_export_settings(output_format)
+    export_kwargs: dict[str, Any] = {"format": export_format}
+    if export_parameters:
+        export_kwargs["parameters"] = export_parameters
+    sanitized_audio.export(str(output_path), **export_kwargs)
 
 
 def mux_video_with_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
@@ -585,6 +622,12 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
     source_suffix = job.input_path.suffix.lower()
     source_is_video = source_suffix in VIDEO_EXTENSIONS or job.input_mime_type.startswith("video/")
     sanitized_intervals = profane_intervals(classified_words)
+
+    if job.audio_only:
+        output_suffix = f".{job.audio_format}"
+        output_path = job_dir / f"sanitized_output{output_suffix}"
+        sanitize_audio(job.input_path, sanitized_intervals, job.censor_type, output_path, job.audio_format)
+        return output_path, mimetypes.guess_type(output_path.name)[0] or "audio/mpeg", None, None
 
     if source_is_video:
         output_suffix = f".{job.requested_format}"
@@ -721,12 +764,15 @@ async def start_processing(
     media: UploadFile = File(...),
     output_format: str = Form("mp4"),
     censor_type: str = Form("beep"),
+    audio_only: bool = Form(False),
+    audio_format: str = Form("mp3"),
 ) -> dict[str, str]:
     suffix = Path(media.filename or "upload").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported media format")
 
     validate_processing_options(output_format, censor_type)
+    validate_audio_output_format(audio_format)
 
     job_id = uuid.uuid4().hex
     job_dir = JOBS_DIR / job_id
@@ -744,6 +790,8 @@ async def start_processing(
         input_mime_type=media.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream",
         requested_format=output_format,
         censor_type=censor_type,
+        audio_only=audio_only,
+        audio_format=audio_format,
     )
 
     with JOBS_LOCK:
@@ -757,6 +805,7 @@ async def start_processing(
 def start_url_processing(request: UrlProcessingRequest) -> dict[str, Any]:
     media_url = validate_remote_media_url(request.url)
     validate_processing_options(request.output_format, request.censor_type)
+    validate_audio_output_format(request.audio_format)
 
     source_host = urlparse(media_url).netloc.replace("www.", "") or "remote-media"
     jobs_to_queue: list[dict[str, str]] = []
@@ -777,7 +826,7 @@ def start_url_processing(request: UrlProcessingRequest) -> dict[str, Any]:
         job_dir = JOBS_DIR / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         display_name = queued_item["title"]
-        safe_stem = build_safe_filename_stem(display_name, f"{source_host}-{index}")
+        safe_stem = build_safe_filename_stem(display_name, f"{source_host}-{index}", max_length=48)
         placeholder_name = f"{safe_stem}.url"
 
         job = JobState(
@@ -787,6 +836,8 @@ def start_url_processing(request: UrlProcessingRequest) -> dict[str, Any]:
             input_mime_type="application/octet-stream",
             requested_format=request.output_format,
             censor_type=request.censor_type,
+            audio_only=request.audio_only,
+            audio_format=request.audio_format,
             result={"source_title": display_name},
         )
 

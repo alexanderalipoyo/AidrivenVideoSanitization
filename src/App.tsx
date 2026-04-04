@@ -63,6 +63,7 @@ export interface ConversionSettings {
   format: string;
   sensorType: "beep" | "silence" | "faaa";
   audioOnly: boolean;
+  audioFormat: string;
   normalize: boolean;
   compress: boolean;
   compressionLevel: "low" | "medium" | "high" | "extreme";
@@ -88,7 +89,8 @@ export default function App() {
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
-    audioOnly: true,
+    audioOnly: false,
+    audioFormat: "mp3",
     normalize: false,
     compress: false,
     compressionLevel: "medium",
@@ -121,6 +123,7 @@ export default function App() {
       const queued = await startProcessingUrlJob({
         url: options.url,
         audioOnly: urlAudioOnly,
+        audioFormat: settings.audioFormat,
         playlist: false,
         format: settings.format,
         sensorType: settings.sensorType,
@@ -226,6 +229,8 @@ export default function App() {
         const job = await startProcessingJob(file.file, {
           format: processingSettings.format,
           sensorType: processingSettings.sensorType,
+          audioOnly: processingSettings.audioOnly,
+          audioFormat: processingSettings.audioFormat,
         });
 
         updateFile(file.id, { serverJobId: job.job_id });
@@ -405,6 +410,7 @@ export default function App() {
                     <FormatSelector
                       settings={settings}
                       onSettingsChange={setSettings}
+                      showAudioOnly
                     />
                   </div>
                 </div>

@@ -7,6 +7,8 @@ const apiBaseUrl = importMeta.env?.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 export interface ProcessingApiSettings {
   format: string;
   sensorType: "beep" | "silence" | "faaa";
+  audioOnly?: boolean;
+  audioFormat?: string;
 }
 
 export interface UrlProcessingApiSettings extends ProcessingApiSettings {
@@ -104,6 +106,8 @@ export async function startProcessingJob(file: File, settings: ProcessingApiSett
   formData.append("media", file);
   formData.append("output_format", settings.format);
   formData.append("censor_type", settings.sensorType);
+  formData.append("audio_only", String(Boolean(settings.audioOnly)));
+  formData.append("audio_format", settings.audioFormat ?? "mp3");
 
   const response = await fetch(toApiUrl("/api/process"), {
     method: "POST",
@@ -129,6 +133,7 @@ export async function startProcessingUrlJob(settings: UrlProcessingApiSettings) 
       output_format: settings.format,
       censor_type: settings.sensorType,
       audio_only: settings.audioOnly,
+      audio_format: settings.audioFormat ?? "mp3",
       playlist: settings.playlist,
     }),
   });
