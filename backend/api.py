@@ -10,11 +10,18 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import whisper
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 
 
 def resolve_binary(binary_name: str) -> str | None:
@@ -53,14 +60,9 @@ PROFANITY_CSV_DIR = DATA_DIR / "profanity_csv"
 VBW_CACHE_PATH = DATA_DIR / "vbw_classify.csv"
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
+VIDEO_EXTENSIONS = VIDEO_EXTENSIONS | {".webm"}
 ALLOWED_EXTENSIONS = VIDEO_EXTENSIONS | {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus", ".aac", ".wma"}
-FALLBACK_PROFANITY_MAP = {
-    "damn": "English",
-    "hell": "English",
-    "shit": "English",
-    "fuck": "English",
-    "bitch": "English",
-}
+SUPPORTED_AUDIO_OUTPUT_FORMATS = {"mp3", "wav", "flac", "ogg", "aac", "m4a"}
 PUNCTUATION_TO_STRIP = " \t\r\n.,!?;:\"'`()[]{}<>-_"
 CENSOR_SOUND_FILES = {
     "faaa": SOUND_DIR / "faaa.mp3",
@@ -93,10 +95,37 @@ class JobState:
     input_mime_type: str
     requested_format: str
     censor_type: str
+    audio_only: bool = False
+    audio_format: str = "mp3"
     status: str = "queued"
     progress: float = 0.0
     error: str | None = None
     result: dict[str, Any] | None = None
+
+
+class UrlProcessingRequest(BaseModel):
+    url: str
+    output_format: str = "mp4"
+    censor_type: str = "beep"
+    audio_only: bool = True
+    audio_format: str = "mp3"
+    playlist: bool = False
+
+
+def build_safe_filename_stem(value: str, fallback: str, max_length: int = 80) -> str:
+    cleaned = "".join(
+        character if character.isalnum() or character in {" ", "-", "_", "."} else "_"
+        for character in value.strip()
+    ).strip(" ._")
+    return cleaned[:max_length] or fallback
+
+
+def build_safe_filename_token(value: str, fallback: str, max_length: int = 24) -> str:
+    cleaned = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in value.strip()
+    ).strip("._-")
+    return cleaned[:max_length] or fallback
 
 
 JOBS: dict[str, JobState] = {}
@@ -122,6 +151,46 @@ def update_job(job_id: str, **changes: Any) -> None:
             setattr(job, key, value)
 
 
+def delete_job_files(job_id: str) -> None:
+    job_dir = JOBS_DIR / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+def delete_job(job_id: str) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+
+    if job and job.status in {"queued", "processing"}:
+        raise HTTPException(status_code=409, detail="Cannot delete a job that is still running")
+
+    delete_job_files(job_id)
+
+    with JOBS_LOCK:
+        JOBS.pop(job_id, None)
+
+
+def validate_processing_options(output_format: str, censor_type: str) -> None:
+    if output_format not in {"mp4", "avi", "mov", "mkv"}:
+        raise HTTPException(status_code=400, detail="Unsupported output format")
+
+    if censor_type not in {"beep", "silence", *CENSOR_SOUND_FILES.keys()}:
+        raise HTTPException(status_code=400, detail="Unsupported censor type")
+
+
+def validate_audio_output_format(audio_format: str) -> None:
+    if audio_format not in SUPPORTED_AUDIO_OUTPUT_FORMATS:
+        raise HTTPException(status_code=400, detail="Unsupported audio format")
+
+
+def validate_remote_media_url(media_url: str) -> str:
+    normalized_url = media_url.strip()
+    parsed_url = urlparse(normalized_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise HTTPException(status_code=400, detail="A valid http or https URL is required")
+    return normalized_url
+
+
 def load_whisper_model() -> Any:
     global WHISPER_MODEL
     if WHISPER_MODEL is not None:
@@ -134,15 +203,119 @@ def load_whisper_model() -> Any:
     return WHISPER_MODEL
 
 
-def ensure_profanity_cache() -> Path:
-    if VBW_CACHE_PATH.exists():
-        return VBW_CACHE_PATH
+def guess_media_mime_type(file_path: Path) -> str:
+    guessed_type = mimetypes.guess_type(file_path.name)[0]
+    if guessed_type:
+        return guessed_type
+    if file_path.suffix.lower() in VIDEO_EXTENSIONS:
+        return "video/mp4"
+    return "audio/mpeg"
 
-    lines = ["word,language"]
-    lines.extend(f"{word},{language}" for word, language in FALLBACK_PROFANITY_MAP.items())
-    VBW_CACHE_PATH.write_text("\n".join(lines), encoding="utf-8")
 
-    return VBW_CACHE_PATH
+def pick_downloaded_media_file(job_dir: Path) -> Path:
+    candidates = [
+        path
+        for path in job_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in ALLOWED_EXTENSIONS
+    ]
+    if not candidates:
+        raise RuntimeError("yt-dlp did not produce a supported media file")
+    return max(candidates, key=lambda path: (path.stat().st_size, path.stat().st_mtime))
+
+
+def extract_playlist_entries(media_url: str) -> tuple[str | None, list[dict[str, str]]]:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
+
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as downloader:
+        metadata = downloader.extract_info(media_url, download=False)
+
+    raw_entries = metadata.get("entries") or []
+    playlist_title = str(metadata.get("title") or "").strip() or None
+    entries: list[dict[str, str]] = []
+
+    for index, entry in enumerate(raw_entries, start=1):
+        if not entry:
+            continue
+
+        entry_url = str(
+            entry.get("webpage_url")
+            or entry.get("original_url")
+            or ""
+        ).strip()
+
+        if not entry_url:
+            raw_url = str(entry.get("url") or "").strip()
+            if raw_url.startswith("http"):
+                entry_url = raw_url
+            elif raw_url and ("youtube.com" in media_url or "youtu.be" in media_url):
+                entry_url = f"https://www.youtube.com/watch?v={raw_url}"
+
+        if not entry_url:
+            continue
+
+        entry_title = str(entry.get("title") or f"Playlist item {index}").strip() or f"Playlist item {index}"
+        entries.append({
+            "url": entry_url,
+            "title": entry_title,
+        })
+
+    return playlist_title, entries
+
+
+def download_media_from_url(
+    job_id: str,
+    media_url: str,
+    audio_only: bool,
+) -> tuple[Path, str, str]:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
+
+    job = get_job(job_id)
+    job_dir = job.input_path.parent
+    fallback_stem = build_safe_filename_stem(job.filename, "download", max_length=48)
+
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}) as preview_downloader:
+        preview_metadata = preview_downloader.extract_info(media_url, download=False)
+
+    media_title = str(preview_metadata.get("title") or job.filename).strip() or job.filename
+    media_id = build_safe_filename_token(str(preview_metadata.get("id") or job_id), job_id[:12])
+    safe_stem = build_safe_filename_stem(media_title, fallback_stem, max_length=48)
+    output_template = str(job_dir / f"{safe_stem}-{media_id}.%(ext)s")
+    ydl_options: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "nopart": True,
+        "outtmpl": output_template,
+    }
+
+    if audio_only:
+        ydl_options.update(
+            {
+                "format": "bestaudio/best",
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ],
+            }
+        )
+    else:
+        ydl_options.update(
+            {
+                "format": "bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+            }
+        )
+
+    with yt_dlp.YoutubeDL(ydl_options) as downloader:
+        downloader.extract_info(media_url, download=True)
+
+    downloaded_path = pick_downloaded_media_file(job_dir)
+    return downloaded_path, guess_media_mime_type(downloaded_path), media_title
 
 
 def load_profanity_map_from_directory(directory_path: Path) -> dict[str, str]:
@@ -171,6 +344,36 @@ def load_profanity_map_from_directory(directory_path: Path) -> dict[str, str]:
     return profanity_map
 
 
+def load_profanity_map_from_file(file_path: Path, default_language: str) -> dict[str, str]:
+    profanity_map: dict[str, str] = {}
+
+    if not file_path.exists():
+        return profanity_map
+
+    with file_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        saw_language_column = False
+        for row in reader:
+            if not row:
+                continue
+
+            word = str(row[0]).strip().lower()
+            if not word or word == "word":
+                continue
+
+            language = default_language
+            if len(row) > 1 and row[1]:
+                saw_language_column = True
+                language = str(row[1]).strip() or default_language
+
+            profanity_map[word] = language
+
+    if profanity_map and not saw_language_column:
+        return {word: default_language for word in profanity_map}
+
+    return profanity_map
+
+
 def load_profanity_map() -> dict[str, str]:
     global PROFANITY_MAP
     if PROFANITY_MAP is not None:
@@ -183,31 +386,7 @@ def load_profanity_map() -> dict[str, str]:
         profanity_map = load_profanity_map_from_directory(PROFANITY_CSV_DIR)
 
         if not profanity_map:
-            profanity_map = {}
-            cache_path = ensure_profanity_cache()
-            with cache_path.open("r", encoding="utf-8", newline="") as handle:
-                reader = csv.reader(handle)
-                saw_language_column = False
-                for row in reader:
-                    if not row:
-                        continue
-                    word = str(row[0]).strip().lower()
-                    if not word or word == "word":
-                        continue
-                    if len(row) > 1 and row[1]:
-                        saw_language_column = True
-                        language = str(row[1]).strip()
-                    else:
-                        language = "VBW"
-                    profanity_map[word] = language
-
-            if not profanity_map:
-                profanity_map = dict(FALLBACK_PROFANITY_MAP)
-            elif not saw_language_column:
-                profanity_map = {
-                    word: (language or "VBW")
-                    for word, language in profanity_map.items()
-                }
+            profanity_map = load_profanity_map_from_file(VBW_CACHE_PATH, default_language="VBW")
 
         PROFANITY_MAP = profanity_map
         return PROFANITY_MAP
@@ -393,6 +572,14 @@ def render_custom_censor_sound(sound_name: str, duration_ms: int) -> AudioSegmen
     return repeated[:duration_ms]
 
 
+def resolve_audio_export_settings(audio_format: str) -> tuple[str, list[str] | None]:
+    if audio_format == "aac":
+        return "adts", None
+    if audio_format == "m4a":
+        return "mp4", ["-c:a", "aac"]
+    return audio_format, None
+
+
 def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_type: str, output_path: Path, output_format: str) -> None:
     source_audio = AudioSegment.from_file(str(input_path))
     sanitized_audio = AudioSegment.empty()
@@ -415,7 +602,11 @@ def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_typ
         previous_end_ms = end_ms
 
     sanitized_audio += source_audio[previous_end_ms:]
-    sanitized_audio.export(str(output_path), format=output_format)
+    export_format, export_parameters = resolve_audio_export_settings(output_format)
+    export_kwargs: dict[str, Any] = {"format": export_format}
+    if export_parameters:
+        export_kwargs["parameters"] = export_parameters
+    sanitized_audio.export(str(output_path), **export_kwargs)
 
 
 def mux_video_with_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
@@ -451,6 +642,12 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
     source_is_video = source_suffix in VIDEO_EXTENSIONS or job.input_mime_type.startswith("video/")
     sanitized_intervals = profane_intervals(classified_words)
 
+    if job.audio_only:
+        output_suffix = f".{job.audio_format}"
+        output_path = job_dir / f"sanitized_output{output_suffix}"
+        sanitize_audio(job.input_path, sanitized_intervals, job.censor_type, output_path, job.audio_format)
+        return output_path, mimetypes.guess_type(output_path.name)[0] or "audio/mpeg", None, None
+
     if source_is_video:
         output_suffix = f".{job.requested_format}"
         audio_track_path = job_dir / "sanitized_audio.wav"
@@ -485,43 +682,66 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
     return output_path, mimetypes.guess_type(output_path.name)[0] or "audio/mpeg", None, None
 
 
-def process_job(job_id: str) -> None:
+def run_processing_pipeline(job_id: str) -> None:
     job = get_job(job_id)
+    model = load_whisper_model()
 
+    update_job(job_id, progress=35.0)
+    transcription_result = model.transcribe(str(job.input_path), word_timestamps=True)
+
+    update_job(job_id, progress=60.0)
+    words = aggregate_word_timestamps(transcription_result)
+    profanity_map = load_profanity_map()
+    classified_words = classify_profanity(words, profanity_map)
+
+    update_job(job_id, progress=82.0)
+    output_path, output_mime_type, preview_path, preview_mime_type = build_output_file(job, classified_words)
+    preview_filename = preview_path.name if preview_path else output_path.name
+    preview_url = (
+        f"/api/jobs/{job_id}/preview"
+        if preview_path and preview_path != output_path
+        else f"/api/jobs/{job_id}/download"
+    )
+
+    result = {
+        "transcription": build_transcription_payload(transcription_result),
+        "safety_report": classified_words,
+        "source_url": f"/api/jobs/{job_id}/original",
+        "source_filename": job.input_path.name,
+        "source_mime_type": job.input_mime_type,
+        "output_url": f"/api/jobs/{job_id}/download",
+        "output_filename": output_path.name,
+        "output_mime_type": output_mime_type,
+        "preview_url": preview_url,
+        "preview_filename": preview_filename,
+        "preview_mime_type": preview_mime_type or output_mime_type,
+        "profane_count": sum(1 for word in classified_words if word["is_profane"]),
+    }
+
+    update_job(job_id, status="completed", progress=100.0, result=result)
+
+
+def process_job(job_id: str) -> None:
     try:
         update_job(job_id, status="processing", progress=10.0, error=None)
-        model = load_whisper_model()
+        run_processing_pipeline(job_id)
+    except Exception as exc:
+        update_job(job_id, status="error", error=str(exc), progress=100.0)
 
-        update_job(job_id, progress=35.0)
-        transcription_result = model.transcribe(str(job.input_path), word_timestamps=True)
 
-        update_job(job_id, progress=60.0)
-        words = aggregate_word_timestamps(transcription_result)
-        profanity_map = load_profanity_map()
-        classified_words = classify_profanity(words, profanity_map)
-
-        update_job(job_id, progress=82.0)
-        output_path, output_mime_type, preview_path, preview_mime_type = build_output_file(job, classified_words)
-        preview_filename = preview_path.name if preview_path else output_path.name
-        preview_url = (
-            f"/api/jobs/{job_id}/preview"
-            if preview_path and preview_path != output_path
-            else f"/api/jobs/{job_id}/download"
+def process_url_job(job_id: str, media_url: str, audio_only: bool) -> None:
+    try:
+        update_job(job_id, status="processing", progress=8.0, error=None)
+        input_path, input_mime_type, media_title = download_media_from_url(job_id, media_url, audio_only)
+        update_job(
+            job_id,
+            filename=input_path.name,
+            input_path=input_path,
+            input_mime_type=input_mime_type,
+            progress=20.0,
+            result={"source_title": media_title},
         )
-
-        result = {
-            "transcription": build_transcription_payload(transcription_result),
-            "safety_report": classified_words,
-            "output_url": f"/api/jobs/{job_id}/download",
-            "output_filename": output_path.name,
-            "output_mime_type": output_mime_type,
-            "preview_url": preview_url,
-            "preview_filename": preview_filename,
-            "preview_mime_type": preview_mime_type or output_mime_type,
-            "profane_count": sum(1 for word in classified_words if word["is_profane"]),
-        }
-
-        update_job(job_id, status="completed", progress=100.0, result=result)
+        run_processing_pipeline(job_id)
     except Exception as exc:
         update_job(job_id, status="error", error=str(exc), progress=100.0)
 
@@ -563,16 +783,15 @@ async def start_processing(
     media: UploadFile = File(...),
     output_format: str = Form("mp4"),
     censor_type: str = Form("beep"),
+    audio_only: bool = Form(False),
+    audio_format: str = Form("mp3"),
 ) -> dict[str, str]:
     suffix = Path(media.filename or "upload").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported media format")
 
-    if output_format not in {"mp4", "avi", "mov", "mkv"}:
-        raise HTTPException(status_code=400, detail="Unsupported output format")
-
-    if censor_type not in {"beep", "silence", *CENSOR_SOUND_FILES.keys()}:
-        raise HTTPException(status_code=400, detail="Unsupported censor type")
+    validate_processing_options(output_format, censor_type)
+    validate_audio_output_format(audio_format)
 
     job_id = uuid.uuid4().hex
     job_dir = JOBS_DIR / job_id
@@ -590,6 +809,8 @@ async def start_processing(
         input_mime_type=media.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream",
         requested_format=output_format,
         censor_type=censor_type,
+        audio_only=audio_only,
+        audio_format=audio_format,
     )
 
     with JOBS_LOCK:
@@ -597,6 +818,70 @@ async def start_processing(
 
     threading.Thread(target=process_job, args=(job_id,), daemon=True).start()
     return {"job_id": job_id}
+
+
+@app.post("/api/process-url")
+def start_url_processing(request: UrlProcessingRequest) -> dict[str, Any]:
+    media_url = validate_remote_media_url(request.url)
+    validate_processing_options(request.output_format, request.censor_type)
+    validate_audio_output_format(request.audio_format)
+
+    source_host = urlparse(media_url).netloc.replace("www.", "") or "remote-media"
+    jobs_to_queue: list[dict[str, str]] = []
+    playlist_title: str | None = None
+
+    if request.playlist:
+        playlist_title, playlist_entries = extract_playlist_entries(media_url)
+        if not playlist_entries:
+            raise HTTPException(status_code=400, detail="No playable entries were found in the playlist")
+        jobs_to_queue = playlist_entries
+    else:
+        jobs_to_queue = [{"url": media_url, "title": source_host}]
+
+    queued_jobs: list[dict[str, str]] = []
+
+    for index, queued_item in enumerate(jobs_to_queue, start=1):
+        job_id = uuid.uuid4().hex
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        display_name = queued_item["title"]
+        safe_stem = build_safe_filename_stem(display_name, f"{source_host}-{index}", max_length=48)
+        placeholder_name = f"{safe_stem}.url"
+
+        job = JobState(
+            job_id=job_id,
+            filename=display_name,
+            input_path=job_dir / placeholder_name,
+            input_mime_type="application/octet-stream",
+            requested_format=request.output_format,
+            censor_type=request.censor_type,
+            audio_only=request.audio_only,
+            audio_format=request.audio_format,
+            result={"source_title": display_name},
+        )
+
+        with JOBS_LOCK:
+            JOBS[job_id] = job
+
+        threading.Thread(
+            target=process_url_job,
+            args=(job_id, queued_item["url"], request.audio_only),
+            daemon=True,
+        ).start()
+
+        queued_jobs.append(
+            {
+                "job_id": job_id,
+                "filename": display_name,
+                "source_url": queued_item["url"],
+            }
+        )
+
+    return {
+        "jobs": queued_jobs,
+        "total": len(queued_jobs),
+        "playlist_title": playlist_title or "",
+    }
 
 
 @app.get("/api/jobs/{job_id}")
@@ -642,6 +927,19 @@ def download_output(job_id: str) -> FileResponse:
     )
 
 
+@app.get("/api/jobs/{job_id}/original")
+def download_original_input(job_id: str) -> FileResponse:
+    job = get_job(job_id)
+    if not job.input_path.exists():
+        raise HTTPException(status_code=404, detail="Original media missing")
+
+    return FileResponse(
+        path=job.input_path,
+        media_type=job.input_mime_type,
+        filename=job.input_path.name,
+    )
+
+
 @app.get("/api/jobs/{job_id}/preview")
 def preview_output(job_id: str) -> FileResponse:
     job = get_job(job_id)
@@ -658,3 +956,8 @@ def preview_output(job_id: str) -> FileResponse:
         media_type=job.result.get("preview_mime_type") or job.result["output_mime_type"],
         filename=preview_path.name,
     )
+
+
+@app.delete("/api/jobs/{job_id}", status_code=204)
+def remove_job(job_id: str) -> None:
+    delete_job(job_id)

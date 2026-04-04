@@ -11,16 +11,15 @@ import { FormatSelector } from "./components/FormatSelector";
 import { PresetCards } from "./components/PresetCards";
 import { ProcessingQueue } from "./components/ProcessingQueue";
 import { DownloadSection } from "./components/DownloadSection";
-import { BatchProcessor } from "./components/BatchProcessor";
 import {
   AudioWaveform,
+  Link,
   Languages,
   Settings,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
-import { fetchJobStatus, resolveApiAssetUrl, startProcessingJob } from "./lib/api";
+import { deleteJob, fetchJobStatus, resolveApiAssetUrl, startProcessingJob, startProcessingUrlJob } from "./lib/api";
 
 export interface AudioFile {
   id: string;
@@ -63,6 +62,8 @@ export interface AudioFile {
 export interface ConversionSettings {
   format: string;
   sensorType: "beep" | "silence" | "faaa";
+  audioOnly: boolean;
+  audioFormat: string;
   normalize: boolean;
   compress: boolean;
   compressionLevel: "low" | "medium" | "high" | "extreme";
@@ -70,12 +71,26 @@ export interface ConversionSettings {
   preset?: string;
 }
 
+function shouldForceVideoDownload(mediaUrl: string) {
+  try {
+    const hostname = new URL(mediaUrl).hostname.toLowerCase();
+    return hostname.includes("youtube.com")
+      || hostname.includes("youtu.be")
+      || hostname.includes("tiktok.com");
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"upload-media" | "upload-url">("upload-media");
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
+    audioOnly: false,
+    audioFormat: "mp3",
     normalize: false,
     compress: false,
     compressionLevel: "medium",
@@ -98,18 +113,52 @@ export default function App() {
     setFiles((prev) => [...prev, ...audioFiles]);
   };
 
-  const handleUrlAdded = (url: string, filename: string) => {
-    const audioFile: AudioFile = {
-      id: `${Date.now()}-url`,
-      name: filename,
-      size: 0,
-      type: "audio/unknown",
-      status: "error",
-      progress: 100,
-      url,
-      errorMessage: "URL downloads are not wired to the processing API yet.",
-    };
-    setFiles((prev) => [...prev, audioFile]);
+  const handleUrlAdded = async (options: {
+    url: string;
+  }) => {
+    try {
+      const forceVideoDownload = shouldForceVideoDownload(options.url);
+      const urlAudioOnly = forceVideoDownload ? false : settings.audioOnly;
+
+      const queued = await startProcessingUrlJob({
+        url: options.url,
+        audioOnly: urlAudioOnly,
+        audioFormat: settings.audioFormat,
+        playlist: false,
+        format: settings.format,
+        sensorType: settings.sensorType,
+      });
+
+      const queuedFiles: AudioFile[] = queued.jobs.map((job, index) => ({
+        id: `${Date.now()}-url-${index}-${job.job_id}`,
+        name: job.filename || "Remote media",
+        size: 0,
+        type: urlAudioOnly ? "audio/unknown" : "video/unknown",
+        status: "processing",
+        progress: 12,
+        url: job.source_url || options.url,
+        requestedFormat: settings.format,
+        serverJobId: job.job_id,
+      }));
+
+      setFiles((prev) => [...prev, ...queuedFiles]);
+
+      queuedFiles.forEach((queuedFile) => {
+        if (!queuedFile.serverJobId) {
+          return;
+        }
+
+        void pollJobUntilComplete(queuedFile.id, queuedFile.serverJobId).catch((error) => {
+          updateFile(queuedFile.id, {
+            status: "error",
+            progress: 100,
+            errorMessage: error instanceof Error ? error.message : "URL processing failed",
+          });
+        });
+      });
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("URL processing failed");
+    }
   };
 
   const updateFile = (id: string, changes: Partial<AudioFile>) => {
@@ -129,6 +178,8 @@ export default function App() {
           progress: 100,
           transcription: job.result.transcription,
           safetyReport: job.result.safety_report,
+          previewUrl: resolveApiAssetUrl(job.result.source_url),
+          type: job.result.source_mime_type,
           outputPreviewUrl: resolveApiAssetUrl(job.result.preview_url),
           outputPreviewMimeType: job.result.preview_mime_type,
           outputUrl: resolveApiAssetUrl(job.result.output_url),
@@ -178,6 +229,8 @@ export default function App() {
         const job = await startProcessingJob(file.file, {
           format: processingSettings.format,
           sensorType: processingSettings.sensorType,
+          audioOnly: processingSettings.audioOnly,
+          audioFormat: processingSettings.audioFormat,
         });
 
         updateFile(file.id, { serverJobId: job.job_id });
@@ -205,16 +258,37 @@ export default function App() {
     });
   };
 
-  const handleClearCompleted = () => {
+  const handleClearCompleted = async () => {
+    const completedFiles = files.filter((file) => file.status === "completed");
+    const completedServerJobs = completedFiles.filter((file) => file.serverJobId);
+
+    const deletionResults = await Promise.allSettled(
+      completedServerJobs.map((file) => deleteJob(file.serverJobId as string)),
+    );
+
+    const failedJobIds = new Set(
+      deletionResults.flatMap((result, index) =>
+        result.status === "rejected"
+          ? [completedServerJobs[index].serverJobId as string]
+          : [],
+      ),
+    );
+
     setFiles((prev) => {
       prev
-        .filter((file) => file.status === "completed" && file.previewUrl?.startsWith("blob:"))
+        .filter(
+          (file) => file.status === "completed"
+            && !failedJobIds.has(file.serverJobId || "")
+            && file.previewUrl?.startsWith("blob:"),
+        )
         .forEach((file) => {
           if (file.previewUrl) {
             URL.revokeObjectURL(file.previewUrl);
           }
         });
-      return prev.filter((file) => file.status !== "completed");
+      return prev.filter(
+        (file) => file.status !== "completed" || failedJobIds.has(file.serverJobId || ""),
+      );
     });
   };
 
@@ -322,75 +396,67 @@ export default function App() {
 
       <div className="container mx-auto flex-1 px-6 py-8">
         {activePage === "workspace" ? (
-          <Tabs defaultValue="convert" className="space-y-6">
-            <TabsList className="hidden border border-slate-800 bg-slate-900/50">
-              <TabsTrigger
-                value="convert"
-                className="data-[state=active]:bg-violet-600"
-              >
-                <Settings className="mr-2 w-4 h-4" />
-                Convert Files
-              </TabsTrigger>
-              <TabsTrigger
-                value="download"
-                className="data-[state=active]:bg-violet-600"
-              >
-                <AudioWaveform className="mr-2 w-4 h-4" />
-                Download Audio
-              </TabsTrigger>
-              <TabsTrigger
-                value="batch"
-                className="data-[state=active]:bg-violet-600"
-              >
-                <Sparkles className="mr-2 w-4 h-4" />
-                Batch Process
-              </TabsTrigger>
-            </TabsList>
+          <div className="space-y-6">
+            <Tabs
+              value={activeWorkspaceTab}
+              onValueChange={(value) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
+              className="space-y-6"
+            >
+              <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
+                <TabsTrigger
+                  value="upload-media"
+                  className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
+                >
+                  <Settings className="mr-2 w-4 h-4" />
+                  Upload Media Files
+                </TabsTrigger>
+                <TabsTrigger
+                  value="upload-url"
+                  className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
+                >
+                  <Link className="mr-2 w-4 h-4" />
+                  Upload via Url
+                </TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="convert" className="space-y-6">
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="space-y-6 lg:col-span-2">
-                  <FileUploadZone
-                    onFilesAdded={handleFilesAdded}
-                  />
+              <TabsContent value="upload-media" className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="space-y-6 lg:col-span-2">
+                    <FileUploadZone
+                      onFilesAdded={handleFilesAdded}
+                    />
+                  </div>
+
+                  <div className="space-y-6">
+                    <FormatSelector
+                      settings={settings}
+                      onSettingsChange={setSettings}
+                      showAudioOnly
+                    />
+                  </div>
                 </div>
+              </TabsContent>
 
-                <div className="space-y-6">
-                  <FormatSelector
-                    settings={settings}
-                    onSettingsChange={setSettings}
-                  />
-                </div>
-              </div>
-
-              {files.length > 0 && (
-                <ProcessingQueue
-                  files={files}
-                  onStartProcessing={handleStartProcessing}
-                  onRemoveFile={handleRemoveFile}
-                  onClearCompleted={handleClearCompleted}
-                  onToggleExpanded={handleToggleExpanded}
-                  onDownloadFile={handleDownloadFile}
+              <TabsContent value="upload-url">
+                <DownloadSection
+                  settings={settings}
+                  onSettingsChange={setSettings}
+                  onUrlAdded={handleUrlAdded}
                 />
-              )}
-            </TabsContent>
+              </TabsContent>
+            </Tabs>
 
-            <TabsContent value="download">
-              <DownloadSection
-                settings={settings}
-                onSettingsChange={setSettings}
-                onUrlAdded={handleUrlAdded}
+            {files.length > 0 && (
+              <ProcessingQueue
+                files={files}
+                onStartProcessing={handleStartProcessing}
+                onRemoveFile={handleRemoveFile}
+                onClearCompleted={handleClearCompleted}
+                onToggleExpanded={handleToggleExpanded}
+                onDownloadFile={handleDownloadFile}
               />
-            </TabsContent>
-
-            <TabsContent value="batch">
-              <BatchProcessor
-                settings={settings}
-                onSettingsChange={setSettings}
-                onFilesAdded={handleFilesAdded}
-              />
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         ) : (
           <SupportedLanguagesPage />
         )}

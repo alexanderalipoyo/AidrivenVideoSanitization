@@ -2,14 +2,16 @@ import { Card } from './ui/card';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Button } from './ui/button';
-import { Volume2 } from 'lucide-react';
+import { Volume2, Music } from 'lucide-react';
 import type { ConversionSettings } from '../App';
 import { useState, useRef } from 'react';
 import { resolveCensorSoundUrl } from '../lib/api';
+import { Switch } from './ui/switch';
 
 interface FormatSelectorProps {
   settings: ConversionSettings;
   onSettingsChange: (settings: ConversionSettings) => void;
+  showAudioOnly?: boolean;
 }
 
 const formats = [
@@ -19,16 +21,26 @@ const formats = [
   { value: 'mkv', label: 'MKV', description: 'High quality' },
 ];
 
+const audioFormats = [
+  { value: 'mp3', label: 'MP3', description: 'Best compatibility' },
+  { value: 'wav', label: 'WAV', description: 'Uncompressed audio' },
+  { value: 'flac', label: 'FLAC', description: 'Lossless compression' },
+  { value: 'ogg', label: 'OGG', description: 'Open compressed audio' },
+  { value: 'aac', label: 'AAC', description: 'Efficient streaming audio' },
+  { value: 'm4a', label: 'M4A', description: 'Apple-compatible audio' },
+];
+
 const sensorTypes = [
   { value: 'beep', label: 'Beep', description: 'Replace with beep sound' },
   { value: 'silence', label: 'Silence', description: 'Mute censored content' },
   { value: 'faaa', label: 'Faaa', description: 'Use backend_data/censor_sounds/faaa.mp3' },
 ];
 
-export function FormatSelector({ settings, onSettingsChange }: FormatSelectorProps) {
+export function FormatSelector({ settings, onSettingsChange, showAudioOnly = false }: FormatSelectorProps) {
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const selectedFormat = formats.find((format) => format.value === settings.format);
+  const selectedAudioFormat = audioFormats.find((format) => format.value === settings.audioFormat);
   const selectedSensorType = sensorTypes.find((type) => type.value === settings.sensorType);
 
   const handlePlayPreview = () => {
@@ -82,13 +94,30 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
         <h3 className="text-slate-100">Output Settings</h3>
 
         <div className="space-y-4">
+          {showAudioOnly && (
+            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+              <div className="flex items-center gap-3">
+                <Music className="h-4 w-4 text-violet-400" />
+                <div>
+                  <Label className="text-slate-300 cursor-pointer">Audio Only</Label>
+                  <p className="text-xs text-slate-500">Extract audio track before sanitization</p>
+                </div>
+              </div>
+              <Switch
+                checked={settings.audioOnly}
+                onCheckedChange={(value) => onSettingsChange({ ...settings, audioOnly: value })}
+              />
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label className="text-slate-300">Video Format</Label>
             <Select
               value={settings.format}
+              disabled={settings.audioOnly}
               onValueChange={(value) => onSettingsChange({ ...settings, format: value })}
             >
-              <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200">
+              <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200 disabled:opacity-50">
                 <SelectValue placeholder="Select format">
                   {selectedFormat?.label}
                 </SelectValue>
@@ -108,7 +137,40 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
                 ))}
               </SelectContent>
             </Select>
+            {settings.audioOnly && (
+              <p className="text-xs text-slate-500">Video format is ignored while Audio Only is enabled.</p>
+            )}
           </div>
+
+          {settings.audioOnly && (
+            <div className="space-y-2">
+              <Label className="text-slate-300">Audio Format</Label>
+              <Select
+                value={settings.audioFormat}
+                onValueChange={(value) => onSettingsChange({ ...settings, audioFormat: value })}
+              >
+                <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200">
+                  <SelectValue placeholder="Select audio format">
+                    {selectedAudioFormat?.label}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-slate-700">
+                  {audioFormats.map((format) => (
+                    <SelectItem
+                      key={format.value}
+                      value={format.value}
+                      className="text-slate-200 focus:bg-slate-800"
+                    >
+                      <div>
+                        <div>{format.label}</div>
+                        <div className="text-xs text-slate-500">{format.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label className="text-slate-300">Sensor Type</Label>
