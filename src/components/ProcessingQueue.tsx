@@ -53,6 +53,17 @@ export function ProcessingQueue({
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
+  const buildMetadataLabel = (file: AudioFile) => {
+    const parts: string[] = [];
+
+    if (file.size > 0) {
+      parts.push(formatFileSize(file.size));
+    }
+
+    parts.push(file.status);
+    return parts.join(' • ');
+  };
+
   const renderAnalysisSection = (
     fileId: string,
     sectionId: string,
@@ -141,9 +152,9 @@ export function ProcessingQueue({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex-1 min-w-0">
-                        <p className="text-slate-200 truncate">{file.name}</p>
+                        <p className="break-all text-slate-200">{file.url || file.name}</p>
                         <p className="text-xs text-slate-500">
-                          {formatFileSize(file.size)} • {file.status}
+                          {buildMetadataLabel(file)}
                         </p>
                       </div>
 
