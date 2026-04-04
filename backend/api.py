@@ -16,6 +16,33 @@ import whisper
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+
+
+def resolve_binary(binary_name: str) -> str | None:
+    discovered_path = shutil.which(binary_name)
+    if discovered_path:
+        return discovered_path
+
+    local_app_data = Path(os.getenv("LOCALAPPDATA", ""))
+    if local_app_data:
+        winget_root = local_app_data / "Microsoft" / "WinGet" / "Packages"
+        if winget_root.exists():
+            pattern = f"Gyan.FFmpeg_*/*/bin/{binary_name}.exe"
+            matches = sorted(winget_root.glob(pattern), reverse=True)
+            if matches:
+                return str(matches[0])
+
+    return None
+
+
+FFMPEG_BINARY = resolve_binary("ffmpeg")
+FFPROBE_BINARY = resolve_binary("ffprobe")
+if FFMPEG_BINARY:
+    ffmpeg_dir = str(Path(FFMPEG_BINARY).parent)
+    current_path = os.environ.get("PATH", "")
+    if ffmpeg_dir not in current_path:
+        os.environ["PATH"] = f"{ffmpeg_dir}{os.pathsep}{current_path}" if current_path else ffmpeg_dir
+
 from pydub import AudioSegment
 from pydub.generators import Sine
 
@@ -38,6 +65,11 @@ PUNCTUATION_TO_STRIP = " \t\r\n.,!?;:\"'`()[]{}<>-_"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+if FFMPEG_BINARY:
+    AudioSegment.converter = FFMPEG_BINARY
+if FFPROBE_BINARY:
+    AudioSegment.ffprobe = FFPROBE_BINARY
 
 app = FastAPI(title="AI-Driven Video Sanitization API")
 app.add_middleware(
