@@ -502,6 +502,12 @@ def process_job(job_id: str) -> None:
 
         update_job(job_id, progress=82.0)
         output_path, output_mime_type, preview_path, preview_mime_type = build_output_file(job, classified_words)
+        preview_filename = preview_path.name if preview_path else output_path.name
+        preview_url = (
+            f"/api/jobs/{job_id}/preview"
+            if preview_path and preview_path != output_path
+            else f"/api/jobs/{job_id}/download"
+        )
 
         result = {
             "transcription": build_transcription_payload(transcription_result),
@@ -509,7 +515,8 @@ def process_job(job_id: str) -> None:
             "output_url": f"/api/jobs/{job_id}/download",
             "output_filename": output_path.name,
             "output_mime_type": output_mime_type,
-            "preview_url": f"/api/jobs/{job_id}/preview" if preview_path else f"/api/jobs/{job_id}/download",
+            "preview_url": preview_url,
+            "preview_filename": preview_filename,
             "preview_mime_type": preview_mime_type or output_mime_type,
             "profane_count": sum(1 for word in classified_words if word["is_profane"]),
         }
@@ -641,8 +648,7 @@ def preview_output(job_id: str) -> FileResponse:
     if not job.result:
         raise HTTPException(status_code=404, detail="Job output not ready")
 
-    preview_url = job.result.get("preview_url")
-    preview_filename = "sanitized_preview.mp4" if preview_url and preview_url.endswith("/preview") else job.result["output_filename"]
+    preview_filename = job.result.get("preview_filename") or job.result["output_filename"]
     preview_path = job.input_path.parent / preview_filename
     if not preview_path.exists():
         raise HTTPException(status_code=404, detail="Preview file missing")
