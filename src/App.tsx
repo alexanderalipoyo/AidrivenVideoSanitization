@@ -12,15 +12,14 @@ import { PresetCards } from "./components/PresetCards";
 import { ProcessingQueue } from "./components/ProcessingQueue";
 import { DownloadSection } from "./components/DownloadSection";
 import { BatchProcessor } from "./components/BatchProcessor";
-import { WordTimestamps } from "./components/WordTimestamps";
-import { WordSafetyReport } from "./components/WordSafetyReport";
-import { VideoPreview } from "./components/VideoPreview";
-import { ProfanityGraphs } from "./components/ProfanityGraphs";
 import {
   AudioWaveform,
+  Languages,
   Settings,
   Sparkles,
 } from "lucide-react";
+import { Button } from "./components/ui/button";
+import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
 import { fetchJobStatus, resolveApiAssetUrl, startProcessingJob } from "./lib/api";
 
 export interface AudioFile {
@@ -73,6 +72,7 @@ export interface ConversionSettings {
 
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
+  const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
@@ -276,101 +276,124 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-      {/* Header */}
       <div className="border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm">
         <div className="container mx-auto px-6 py-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl">
-              <AudioWaveform className="w-8 h-8 text-white" />
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 p-2">
+                <AudioWaveform className="w-8 h-8 text-white" />
+              </div>
+              <div>
+                <h1 className="text-slate-100">AI-Driven Video Sanitization</h1>
+                <p className="text-sm text-slate-400">
+                  Combining OpenAI Whisper with VBW Blacklisting
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-slate-100">AI-Driven Video Sanitization</h1>
-              <p className="text-slate-400 text-sm">
-                Combining OpenAI Whisper with VBW Blacklisting
-              </p>
+            <div className="flex items-center justify-end gap-3">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setActivePage("workspace")}
+                className={activePage === "workspace"
+                  ? "border border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-800"
+                  : "text-slate-300 hover:bg-slate-800/70 hover:text-slate-100"
+                }
+              >
+                <Settings className="h-4 w-4" />
+                Workspace
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setActivePage("supported-languages")}
+                className={activePage === "supported-languages"
+                  ? "border border-cyan-500/40 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15"
+                  : "text-slate-300 hover:bg-slate-800/70 hover:text-slate-100"
+                }
+              >
+                <Languages className="h-4 w-4" />
+                Supported language
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="container mx-auto px-6 py-8">
-        <Tabs defaultValue="convert" className="space-y-6">
-          <TabsList className="bg-slate-900/50 border border-slate-800 hidden">
-            <TabsTrigger
-              value="convert"
-              className="data-[state=active]:bg-violet-600"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              Convert Files
-            </TabsTrigger>
-            <TabsTrigger
-              value="download"
-              className="data-[state=active]:bg-violet-600"
-            >
-              <AudioWaveform className="w-4 h-4 mr-2" />
-              Download Audio
-            </TabsTrigger>
-            <TabsTrigger
-              value="batch"
-              className="data-[state=active]:bg-violet-600"
-            >
-              <Sparkles className="w-4 h-4 mr-2" />
-              Batch Process
-            </TabsTrigger>
-          </TabsList>
+        {activePage === "workspace" ? (
+          <Tabs defaultValue="convert" className="space-y-6">
+            <TabsList className="hidden border border-slate-800 bg-slate-900/50">
+              <TabsTrigger
+                value="convert"
+                className="data-[state=active]:bg-violet-600"
+              >
+                <Settings className="mr-2 w-4 h-4" />
+                Convert Files
+              </TabsTrigger>
+              <TabsTrigger
+                value="download"
+                className="data-[state=active]:bg-violet-600"
+              >
+                <AudioWaveform className="mr-2 w-4 h-4" />
+                Download Audio
+              </TabsTrigger>
+              <TabsTrigger
+                value="batch"
+                className="data-[state=active]:bg-violet-600"
+              >
+                <Sparkles className="mr-2 w-4 h-4" />
+                Batch Process
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Convert Tab */}
-          <TabsContent value="convert" className="space-y-6">
-            <div className="grid lg:grid-cols-3 gap-6">
-              {/* Left Column - Upload & Presets */}
-              <div className="lg:col-span-2 space-y-6">
-                <FileUploadZone
-                  onFilesAdded={handleFilesAdded}
-                />
-                {/* Quick Presets hidden */}
+            <TabsContent value="convert" className="space-y-6">
+              <div className="grid gap-6 lg:grid-cols-3">
+                <div className="space-y-6 lg:col-span-2">
+                  <FileUploadZone
+                    onFilesAdded={handleFilesAdded}
+                  />
+                </div>
+
+                <div className="space-y-6">
+                  <FormatSelector
+                    settings={settings}
+                    onSettingsChange={setSettings}
+                  />
+                </div>
               </div>
 
-              {/* Right Column - Settings */}
-              <div className="space-y-6">
-                <FormatSelector
-                  settings={settings}
-                  onSettingsChange={setSettings}
+              {files.length > 0 && (
+                <ProcessingQueue
+                  files={files}
+                  onStartProcessing={handleStartProcessing}
+                  onRemoveFile={handleRemoveFile}
+                  onClearCompleted={handleClearCompleted}
+                  onToggleExpanded={handleToggleExpanded}
+                  onDownloadFile={handleDownloadFile}
                 />
-              </div>
-            </div>
+              )}
+            </TabsContent>
 
-            {/* Processing Queue */}
-            {files.length > 0 && (
-              <ProcessingQueue
-                files={files}
-                onStartProcessing={handleStartProcessing}
-                onRemoveFile={handleRemoveFile}
-                onClearCompleted={handleClearCompleted}
-                onToggleExpanded={handleToggleExpanded}
-                onDownloadFile={handleDownloadFile}
+            <TabsContent value="download">
+              <DownloadSection
+                settings={settings}
+                onSettingsChange={setSettings}
+                onUrlAdded={handleUrlAdded}
               />
-            )}
-          </TabsContent>
+            </TabsContent>
 
-          {/* Download Tab */}
-          <TabsContent value="download">
-            <DownloadSection
-              settings={settings}
-              onSettingsChange={setSettings}
-              onUrlAdded={handleUrlAdded}
-            />
-          </TabsContent>
-
-          {/* Batch Tab */}
-          <TabsContent value="batch">
-            <BatchProcessor
-              settings={settings}
-              onSettingsChange={setSettings}
-              onFilesAdded={handleFilesAdded}
-            />
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="batch">
+              <BatchProcessor
+                settings={settings}
+                onSettingsChange={setSettings}
+                onFilesAdded={handleFilesAdded}
+              />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <SupportedLanguagesPage />
+        )}
       </div>
     </div>
   );

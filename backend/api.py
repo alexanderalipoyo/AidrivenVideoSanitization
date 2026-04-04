@@ -213,6 +213,79 @@ def load_profanity_map() -> dict[str, str]:
         return PROFANITY_MAP
 
 
+def list_supported_languages() -> list[dict[str, Any]]:
+    supported_languages: list[dict[str, Any]] = []
+
+    if not PROFANITY_CSV_DIR.exists():
+        return supported_languages
+
+    for csv_path in sorted(PROFANITY_CSV_DIR.glob("*.csv")):
+        language_name = csv_path.stem.replace("_", " ").strip()
+        if not language_name:
+            continue
+
+        word_count = 0
+        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.reader(handle)
+            for row in reader:
+                if not row:
+                    continue
+
+                word = str(row[0]).strip()
+                if not word or word.lower() == "word":
+                    continue
+
+                word_count += 1
+
+        supported_languages.append(
+            {
+                "name": language_name,
+                "file": csv_path.name,
+                "word_count": word_count,
+            }
+        )
+
+    return supported_languages
+
+
+def get_supported_language_csv(csv_filename: str) -> tuple[str, Path]:
+    csv_path = (PROFANITY_CSV_DIR / csv_filename).resolve()
+    if csv_path.parent != PROFANITY_CSV_DIR.resolve() or csv_path.suffix.lower() != ".csv":
+        raise HTTPException(status_code=404, detail="Language file not found")
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Language file not found")
+
+    language_name = csv_path.stem.replace("_", " ").strip()
+    if not language_name:
+        raise HTTPException(status_code=404, detail="Language file not found")
+
+    return language_name, csv_path
+
+
+def read_supported_language_entries(csv_filename: str) -> dict[str, Any]:
+    language_name, csv_path = get_supported_language_csv(csv_filename)
+    entries: list[str] = []
+
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        for row in reader:
+            if not row:
+                continue
+
+            word = str(row[0]).strip()
+            if not word or word.lower() == "word":
+                continue
+
+            entries.append(word)
+
+    return {
+        "name": language_name,
+        "file": csv_path.name,
+        "entries": entries,
+        "total": len(entries),
+    }
+
+
 def aggregate_word_timestamps(result: dict[str, Any]) -> list[dict[str, Any]]:
     words: list[dict[str, Any]] = []
     for segment in result.get("segments", []):
@@ -449,6 +522,20 @@ def process_job(job_id: str) -> None:
 @app.get("/api/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok", "whisper_model": WHISPER_MODEL_NAME}
+
+
+@app.get("/api/supported-languages")
+def get_supported_languages() -> dict[str, Any]:
+    languages = list_supported_languages()
+    return {
+        "languages": languages,
+        "total": len(languages),
+    }
+
+
+@app.get("/api/supported-languages/{csv_filename}")
+def get_supported_language_entries(csv_filename: str) -> dict[str, Any]:
+    return read_supported_language_entries(csv_filename)
 
 
 @app.get("/api/censor-sounds/{sound_name}")

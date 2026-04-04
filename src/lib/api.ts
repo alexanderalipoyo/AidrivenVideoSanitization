@@ -45,6 +45,24 @@ export interface ProcessingJobStatus {
   result: ProcessingJobResult | null;
 }
 
+export interface SupportedLanguage {
+  name: string;
+  file: string;
+  word_count: number;
+}
+
+export interface SupportedLanguagesResponse {
+  languages: SupportedLanguage[];
+  total: number;
+}
+
+export interface SupportedLanguageEntriesResponse {
+  name: string;
+  file: string;
+  entries: string[];
+  total: number;
+}
+
 function toApiUrl(path: string) {
   if (!apiBaseUrl) {
     return path;
@@ -87,4 +105,24 @@ export async function fetchJobStatus(jobId: string) {
   }
 
   return response.json() as Promise<ProcessingJobStatus>;
+}
+
+export async function fetchSupportedLanguages() {
+  const response = await fetch(toApiUrl("/api/supported-languages"));
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Failed to fetch supported languages");
+  }
+
+  return response.json() as Promise<SupportedLanguagesResponse>;
+}
+
+export async function fetchSupportedLanguageEntries(csvFilename: string) {
+  const response = await fetch(toApiUrl(`/api/supported-languages/${encodeURIComponent(csvFilename)}`));
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Failed to fetch supported language entries");
+  }
+
+  return response.json() as Promise<SupportedLanguageEntriesResponse>;
 }
