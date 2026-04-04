@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Video, Eye, EyeOff } from 'lucide-react';
 import type { AudioFile } from '../App';
 import { WordTimestamps } from './WordTimestamps';
@@ -10,6 +10,8 @@ interface VideoPreviewProps {
 
 export function VideoPreview({ file, isCensored = false }: VideoPreviewProps) {
   const [currentTime, setCurrentTime] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const mediaUrl = isCensored ? file.outputUrl : file.previewUrl;
   const mediaType = isCensored ? file.outputMimeType : file.type;
   const isVideo = mediaType?.startsWith('video/');
@@ -58,6 +60,17 @@ export function VideoPreview({ file, isCensored = false }: VideoPreviewProps) {
     );
   };
 
+  const handleTimestampClick = (time: number) => {
+    const mediaElement = videoRef.current ?? audioRef.current;
+    if (!mediaElement) {
+      return;
+    }
+
+    mediaElement.pause();
+    mediaElement.currentTime = time;
+    setCurrentTime(time);
+  };
+
   return (
     <div className="p-4">
       <div className="flex items-center gap-2 mb-4">
@@ -84,6 +97,7 @@ export function VideoPreview({ file, isCensored = false }: VideoPreviewProps) {
         {mediaUrl && isVideo ? (
           <>
             <video
+              ref={videoRef}
               src={mediaUrl}
               controls
               className="w-full h-full object-contain bg-black"
@@ -101,6 +115,7 @@ export function VideoPreview({ file, isCensored = false }: VideoPreviewProps) {
               <p className="text-slate-600 text-xs mt-1">{file.name}</p>
             </div>
             <audio
+              ref={audioRef}
               src={mediaUrl}
               controls
               className="w-full max-w-lg"
@@ -137,7 +152,11 @@ export function VideoPreview({ file, isCensored = false }: VideoPreviewProps) {
       {!isCensored && file.transcription && (
         <div className="mt-4 rounded-lg border border-slate-800/50 bg-slate-950/60 p-4">
           <h5 className="mb-3 text-sm font-medium text-slate-200">Word-level Timestamps</h5>
-          <WordTimestamps file={file} />
+          <WordTimestamps
+            file={file}
+            currentTime={currentTime}
+            onTimestampClick={handleTimestampClick}
+          />
         </div>
       )}
     </div>
