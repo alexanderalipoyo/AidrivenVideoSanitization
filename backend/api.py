@@ -48,6 +48,7 @@ from pydub.generators import Sine
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "backend_data"
 JOBS_DIR = DATA_DIR / "jobs"
+SOUND_DIR = DATA_DIR / "censor_sounds"
 PROFANITY_CSV_DIR = DATA_DIR / "profanity_csv"
 VBW_CACHE_PATH = DATA_DIR / "vbw_classify.csv"
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
@@ -61,9 +62,13 @@ FALLBACK_PROFANITY_MAP = {
     "bitch": "English",
 }
 PUNCTUATION_TO_STRIP = " \t\r\n.,!?;:\"'`()[]{}<>-_"
+CENSOR_SOUND_FILES = {
+    "faaa": SOUND_DIR / "faaa.mp3",
+}
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+SOUND_DIR.mkdir(parents=True, exist_ok=True)
 
 if FFMPEG_BINARY:
     AudioSegment.converter = FFMPEG_BINARY
@@ -296,6 +301,25 @@ def render_beep(duration_ms: int) -> AudioSegment:
     return Sine(1000).to_audio_segment(duration=duration_ms).apply_gain(-10)
 
 
+def render_custom_censor_sound(sound_name: str, duration_ms: int) -> AudioSegment:
+    sound_path = CENSOR_SOUND_FILES.get(sound_name)
+    if sound_path is None:
+        raise RuntimeError(f"Unsupported censor sound: {sound_name}")
+    if not sound_path.exists():
+        raise RuntimeError(
+            f"Custom censor sound '{sound_name}' is missing at {sound_path}"
+        )
+
+    source_sound = AudioSegment.from_file(str(sound_path))
+    if len(source_sound) == 0:
+        raise RuntimeError(f"Custom censor sound '{sound_name}' is empty")
+
+    repeated = AudioSegment.empty()
+    while len(repeated) < duration_ms:
+        repeated += source_sound
+    return repeated[:duration_ms]
+
+
 def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_type: str, output_path: Path, output_format: str) -> None:
     source_audio = AudioSegment.from_file(str(input_path))
     sanitized_audio = AudioSegment.empty()
@@ -308,7 +332,12 @@ def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_typ
 
         sanitized_audio += source_audio[previous_end_ms:start_ms]
         if duration_ms > 0:
-            replacement = render_beep(duration_ms) if censor_type == "beep" else AudioSegment.silent(duration=duration_ms)
+            if censor_type == "beep":
+                replacement = render_beep(duration_ms)
+            elif censor_type == "silence":
+                replacement = AudioSegment.silent(duration=duration_ms)
+            else:
+                replacement = render_custom_censor_sound(censor_type, duration_ms)
             sanitized_audio += replacement
         previous_end_ms = end_ms
 
@@ -404,6 +433,19 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok", "whisper_model": WHISPER_MODEL_NAME}
 
 
+@app.get("/api/censor-sounds/{sound_name}")
+def get_censor_sound(sound_name: str) -> FileResponse:
+    sound_path = CENSOR_SOUND_FILES.get(sound_name)
+    if sound_path is None or not sound_path.exists():
+        raise HTTPException(status_code=404, detail="Censor sound not found")
+
+    return FileResponse(
+        path=sound_path,
+        media_type=mimetypes.guess_type(sound_path.name)[0] or "audio/mpeg",
+        filename=sound_path.name,
+    )
+
+
 @app.post("/api/process")
 async def start_processing(
     media: UploadFile = File(...),
@@ -417,7 +459,7 @@ async def start_processing(
     if output_format not in {"mp4", "avi", "mov", "mkv"}:
         raise HTTPException(status_code=400, detail="Unsupported output format")
 
-    if censor_type not in {"beep", "silence"}:
+    if censor_type not in {"beep", "silence", *CENSOR_SOUND_FILES.keys()}:
         raise HTTPException(status_code=400, detail="Unsupported censor type")
 
     job_id = uuid.uuid4().hex

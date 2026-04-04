@@ -6,7 +6,7 @@ const apiBaseUrl = importMeta.env?.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 export interface ProcessingApiSettings {
   format: string;
-  sensorType: "beep" | "silence";
+  sensorType: "beep" | "silence" | "faaa";
 }
 
 export interface ProcessingJobResult {
@@ -52,6 +52,10 @@ function toApiUrl(path: string) {
 
 export function resolveApiAssetUrl(path: string) {
   return toApiUrl(path);
+}
+
+export function resolveCensorSoundUrl(soundName: string) {
+  return toApiUrl(`/api/censor-sounds/${soundName}`);
 }
 
 export async function startProcessingJob(file: File, settings: ProcessingApiSettings) {

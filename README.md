@@ -45,6 +45,12 @@ Included Python packages:
 - ImageMagick may be required for MoviePy text rendering workflows
 - GPU acceleration for Whisper depends on the installed PyTorch build and local CUDA support
 
+## Custom censor sounds
+
+- Built-in censor types: `beep`, `silence`, `faaa`
+- Put `faaa.mp3` at `backend_data/censor_sounds/faaa.mp3` to enable the `faaa` censor type end-to-end
+- The frontend preview button fetches custom censor sounds from `/api/censor-sounds/{name}`
+
 ## End-to-end workflow
 
 1. Start the API with `npm run api`.

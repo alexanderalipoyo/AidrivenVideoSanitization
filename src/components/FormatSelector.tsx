@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import { Volume2 } from 'lucide-react';
 import type { ConversionSettings } from '../App';
 import { useState, useRef } from 'react';
+import { resolveCensorSoundUrl } from '../lib/api';
 
 interface FormatSelectorProps {
   settings: ConversionSettings;
@@ -21,11 +22,14 @@ const formats = [
 const sensorTypes = [
   { value: 'beep', label: 'Beep', description: 'Replace with beep sound' },
   { value: 'silence', label: 'Silence', description: 'Mute censored content' },
+  { value: 'faaa', label: 'Faaa', description: 'Use backend_data/censor_sounds/faaa.mp3' },
 ];
 
 export function FormatSelector({ settings, onSettingsChange }: FormatSelectorProps) {
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const selectedFormat = formats.find((format) => format.value === settings.format);
+  const selectedSensorType = sensorTypes.find((type) => type.value === settings.sensorType);
 
   const handlePlayPreview = () => {
     if (audioRef.current) {
@@ -33,15 +37,13 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
       audioRef.current.currentTime = 0;
     }
 
-    // Create appropriate preview sound
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
     if (settings.sensorType === 'beep') {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
       oscillator.frequency.value = 1000; // 1kHz beep
       gainNode.gain.value = 0.3;
       oscillator.type = 'sine';
@@ -54,8 +56,18 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
         setIsPlayingPreview(false);
         audioContext.close();
       }, 500);
+    } else if (settings.sensorType === 'faaa') {
+      audioRef.current = new Audio(resolveCensorSoundUrl('faaa'));
+      audioRef.current.play().catch(() => {
+        setIsPlayingPreview(false);
+      });
+      setIsPlayingPreview(true);
+      audioRef.current.onended = () => {
+        setIsPlayingPreview(false);
+      };
     } else {
       // For silence, just show a brief indicator
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       setIsPlayingPreview(true);
       setTimeout(() => {
         setIsPlayingPreview(false);
@@ -77,7 +89,9 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
               onValueChange={(value) => onSettingsChange({ ...settings, format: value })}
             >
               <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200">
-                <SelectValue />
+                <SelectValue placeholder="Select format">
+                  {selectedFormat?.label}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-slate-700">
                 {formats.map((format) => (
@@ -100,10 +114,12 @@ export function FormatSelector({ settings, onSettingsChange }: FormatSelectorPro
             <Label className="text-slate-300">Sensor Type</Label>
             <Select
               value={settings.sensorType}
-              onValueChange={(value: "beep" | "silence") => onSettingsChange({ ...settings, sensorType: value })}
+              onValueChange={(value: "beep" | "silence" | "faaa") => onSettingsChange({ ...settings, sensorType: value })}
             >
               <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200">
-                <SelectValue />
+                <SelectValue placeholder="Select sensor type">
+                  {selectedSensorType?.label}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="bg-slate-900 border-slate-700">
                 {sensorTypes.map((type) => (

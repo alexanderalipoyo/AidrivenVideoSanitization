@@ -60,7 +60,7 @@ export interface AudioFile {
 
 export interface ConversionSettings {
   format: string;
-  sensorType: "beep" | "silence";
+  sensorType: "beep" | "silence" | "faaa";
   normalize: boolean;
   compress: boolean;
   compressionLevel: "low" | "medium" | "high" | "extreme";

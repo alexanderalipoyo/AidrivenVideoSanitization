@@ -126,15 +126,17 @@ export function ProfanityGraphs({ file, showHeader = true }: ProfanityGraphsProp
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
+      const tooltipItem = payload[0];
+      const occurrenceCount = tooltipItem.payload.count ?? tooltipItem.value;
       return (
         <div className="bg-slate-950 border border-violet-500/30 rounded-lg p-3 shadow-xl">
-          <p className="text-slate-200 font-medium">{payload[0].name}</p>
+          <p className="text-slate-200 font-medium">{tooltipItem.name}</p>
           <p className="text-violet-400 text-sm">
-            {payload[0].value} occurrence{payload[0].value !== 1 ? 's' : ''}
+            {occurrenceCount} occurrence{occurrenceCount !== 1 ? 's' : ''}
           </p>
-          {payload[0].payload.percentage && (
+          {tooltipItem.payload.percentage && (
             <p className="text-slate-400 text-xs">
-              {payload[0].payload.percentage}% of total
+              {tooltipItem.payload.percentage}% of total
             </p>
           )}
         </div>

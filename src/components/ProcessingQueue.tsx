@@ -91,7 +91,7 @@ export function ProcessingQueue({
                 variant="outline"
                 size="sm"
                 onClick={onClearCompleted}
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                className="border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400/50 hover:bg-amber-500/20 hover:text-amber-100"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Clear Completed
@@ -162,7 +162,7 @@ export function ProcessingQueue({
                               size="sm"
                               variant="outline"
                               onClick={() => onDownloadFile(file.id)}
-                              className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400/50 hover:bg-emerald-500/20 hover:text-emerald-100"
                             >
                               <Download className="w-4 h-4" />
                             </Button>
