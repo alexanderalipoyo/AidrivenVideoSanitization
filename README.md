@@ -15,7 +15,10 @@ It supports both local file uploads and remote media import through supported UR
 - Preview both original and sanitized media in the app
 - Export sanitized video or audio-only output
 - Choose built-in censor behaviors such as `beep`, `silence`, or `faaa`
-- Browse supported profanity dictionaries from the UI
+- Browse supported profanity dictionaries from the UI with lazy-loaded language modals
+- Hover profanity entries in supported language tables to view dictionary meanings or translations
+- Track per-job queue progress with estimated time remaining while processing
+- Re-process completed jobs with the latest output settings directly from the queue
 - Clear completed jobs from both the queue and backend storage
 
 ## Tech stack
@@ -127,6 +130,17 @@ Typical supported sources include:
 - Bandcamp
 - Other sites supported by `yt-dlp`
 
+### Browse supported languages
+
+Open any language card from the `Supported Languages` page to load its profanity CSV in a modal.
+
+The modal now:
+
+- Loads entries lazily in pages when the card is opened
+- Supports server-side search within the selected CSV
+- Loads more entries as you scroll
+- Shows a hover tooltip with a meaning or translated explanation for each listed word
+
 ## Media formats
 
 ### Accepted input formats
@@ -198,8 +212,9 @@ backend_data/vbw_classify.csv
 3. Add a local file or supported URL.
 4. Choose output settings.
 5. Start processing or wait for queued URL jobs to run.
-6. Review the safety report, analytics, and original/sanitized previews.
-7. Download the sanitized result.
+6. Watch queue progress, including estimated time remaining for active jobs.
+7. Review the safety report, analytics, and original/sanitized previews.
+8. Download the sanitized result or re-process a completed item with updated settings.
 8. Clear completed items when you want to reclaim disk space in `backend_data/jobs/`.
 
 ## API overview
@@ -208,7 +223,8 @@ Main backend endpoints:
 
 - `GET /api/health` - health check
 - `GET /api/supported-languages` - list supported profanity CSV files
-- `GET /api/supported-languages/{csv_filename}` - read entries from one profanity CSV
+- `GET /api/supported-languages/{csv_filename}` - read entries from one profanity CSV, with optional `offset`, `limit`, and `search` query parameters for lazy loading
+- `GET /api/google-dictionary` - fetch a meaning or translated explanation for a profanity entry using the requested language
 - `GET /api/censor-sounds/{sound_name}` - serve custom censor sounds
 - `POST /api/process` - upload local media and start a processing job
 - `POST /api/process-url` - start a URL-based processing job
@@ -245,6 +261,10 @@ Whisper model loading can take time the first time the backend starts processing
 ### Completed jobs are taking disk space
 
 Use `Clear Completed` in the queue. Completed job directories are deleted from `backend_data/jobs/` when cleared.
+
+### Supported language modal feels empty at first
+
+Entries are now loaded lazily. Open a language card and scroll in the modal to fetch more rows.
 
 ## Validation
 
