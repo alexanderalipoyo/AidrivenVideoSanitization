@@ -1,4 +1,5 @@
 import type { AudioFile } from '../App';
+import { DictionaryTooltipWord } from './DictionaryTooltipWord';
 
 interface WordTimestampsProps {
   file: AudioFile;
@@ -17,6 +18,17 @@ export function WordTimestamps({ file, currentTime, onTimestampClick }: WordTime
       .filter((item) => item.is_profane)
       .map((item) => `${item.start.toFixed(2)}-${item.end.toFixed(2)}-${item.word.trim().toLowerCase()}`),
   );
+  const profaneWordDetails = new Map(
+    (file.safetyReport ?? [])
+      .filter((item) => item.is_profane)
+      .map((item) => [
+        `${item.start.toFixed(2)}-${item.end.toFixed(2)}-${item.word.trim().toLowerCase()}`,
+        {
+          matchedProfanity: item.matched_profanity || item.word,
+          language: item.matched_profanity_language,
+        },
+      ]),
+  );
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -24,6 +36,7 @@ export function WordTimestamps({ file, currentTime, onTimestampClick }: WordTime
         const wordKey = `${word.start.toFixed(2)}-${word.end.toFixed(2)}-${word.word.trim().toLowerCase()}`;
         const isProfaneWord = profaneWords.has(wordKey);
         const isActiveWord = currentTime !== undefined && currentTime >= word.start && currentTime <= word.end;
+        const profaneWordDetail = profaneWordDetails.get(wordKey);
 
         return (
           <button
@@ -41,7 +54,16 @@ export function WordTimestamps({ file, currentTime, onTimestampClick }: WordTime
             <span className={`font-mono ${isProfaneWord ? 'text-red-300' : 'text-slate-500'}`}>
               [{word.start.toFixed(2)}s → {word.end.toFixed(2)}s]
             </span>
-            <span className={isProfaneWord ? 'text-red-400' : 'text-slate-300'}>{word.word}</span>
+            {isProfaneWord && profaneWordDetail?.language ? (
+              <DictionaryTooltipWord
+                term={profaneWordDetail.matchedProfanity}
+                language={profaneWordDetail.language}
+                displayText={word.word}
+                className="cursor-help text-red-400 underline decoration-dotted underline-offset-4"
+              />
+            ) : (
+              <span className={isProfaneWord ? 'text-red-400' : 'text-slate-300'}>{word.word}</span>
+            )}
           </button>
         );
       })}

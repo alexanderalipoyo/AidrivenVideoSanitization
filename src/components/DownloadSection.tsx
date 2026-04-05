@@ -120,8 +120,26 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                     />
                   ),
                 },
-                { name: 'SoundCloud', icon: '🎵' },
-                { name: 'Vimeo', icon: '📹' },
+                {
+                  name: 'SoundCloud',
+                  icon: (
+                    <img
+                      src="https://soundcloud.com/favicon.ico"
+                      alt="SoundCloud"
+                      className="h-8 w-8 rounded-full"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  ),
+                },
+                {
+                  name: 'Vimeo',
+                  icon: (
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#1ab7ea] text-sm font-bold lowercase text-white">
+                      v
+                    </span>
+                  ),
+                },
                 {
                   name: 'Facebook',
                   icon: (
@@ -130,7 +148,14 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                     </span>
                   ),
                 },
-                { name: 'Bandcamp', icon: '🎸' },
+                {
+                  name: 'Bandcamp',
+                  icon: (
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-[#0f4c5c] text-[11px] font-semibold uppercase tracking-[0.08em] text-white">
+                      bc
+                    </span>
+                  ),
+                },
                 {
                   name: 'X (twitter)',
                   icon: (
@@ -143,7 +168,18 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                     />
                   ),
                 },
-                { name: 'TikTok', icon: '🎬' },
+                {
+                  name: 'TikTok',
+                  icon: (
+                    <img
+                      src="https://www.tiktok.com/favicon.ico"
+                      alt="TikTok"
+                      className="h-8 w-8 rounded-full"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  ),
+                },
                 { name: '1000+ more', icon: '✨' },
               ].map((platform) => (
                 <div
