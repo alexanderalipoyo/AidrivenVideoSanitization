@@ -2,7 +2,7 @@ import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';
 import { useState } from 'react';
-import { Play, X, Download, Trash2, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, X, Download, Trash2, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import type { AudioFile } from '../App';
 import { WordSafetyReport } from './WordSafetyReport';
 import { VideoPreview } from './VideoPreview';
@@ -15,6 +15,7 @@ interface ProcessingQueueProps {
   onClearCompleted: () => void;
   onToggleExpanded: (id: string) => void;
   onDownloadFile: (id: string) => void;
+  onReprocessFile: (id: string) => void;
 }
 
 export function ProcessingQueue({ 
@@ -24,6 +25,7 @@ export function ProcessingQueue({
   onClearCompleted,
   onToggleExpanded,
   onDownloadFile,
+  onReprocessFile,
 }: ProcessingQueueProps) {
   const [sectionState, setSectionState] = useState<Record<string, boolean>>({});
   const hasPendingFiles = files.some(f => f.status === 'pending');
@@ -236,6 +238,14 @@ export function ProcessingQueue({
                       <div className="flex gap-2">
                         {file.status === 'completed' && (
                           <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onReprocessFile(file.id)}
+                              className="border-cyan-500/30 bg-cyan-500/10 text-cyan-200 hover:border-cyan-400/50 hover:bg-cyan-500/20 hover:text-cyan-100"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"

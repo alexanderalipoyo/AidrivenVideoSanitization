@@ -337,6 +337,98 @@ export default function App() {
     document.body.removeChild(anchor);
   };
 
+  const handleReprocessFile = async (id: string) => {
+    const file = files.find((entry) => entry.id === id);
+    if (!file || file.status === "processing") {
+      return;
+    }
+
+    const processingSettings = { ...settings };
+    const processingStartedAt = Date.now();
+
+    const resetForReprocess: Partial<AudioFile> = {
+      status: "processing",
+      progress: 5,
+      requestedFormat: processingSettings.format,
+      errorMessage: undefined,
+      outputUrl: undefined,
+      outputMimeType: undefined,
+      outputPreviewUrl: undefined,
+      outputPreviewMimeType: undefined,
+      outputFilename: undefined,
+      transcription: undefined,
+      safetyReport: undefined,
+      expanded: false,
+      processingStartedAt,
+      processingBaselineProgress: 5,
+    };
+
+    updateFile(id, resetForReprocess);
+
+    try {
+      const previousJobId = file.serverJobId;
+
+      if (file.file) {
+        const job = await startProcessingJob(file.file, {
+          format: processingSettings.format,
+          sensorType: processingSettings.sensorType,
+          audioOnly: processingSettings.audioOnly,
+          audioFormat: processingSettings.audioFormat,
+        });
+
+        updateFile(id, { serverJobId: job.job_id });
+
+        if (previousJobId) {
+          void deleteJob(previousJobId).catch(() => undefined);
+        }
+
+        await pollJobUntilComplete(id, job.job_id);
+        return;
+      }
+
+      if (file.url) {
+        const forceVideoDownload = shouldForceVideoDownload(file.url);
+        const urlAudioOnly = forceVideoDownload ? false : processingSettings.audioOnly;
+        const queued = await startProcessingUrlJob({
+          url: file.url,
+          audioOnly: urlAudioOnly,
+          audioFormat: processingSettings.audioFormat,
+          playlist: false,
+          format: processingSettings.format,
+          sensorType: processingSettings.sensorType,
+        });
+        const queuedJob = queued.jobs[0];
+
+        if (!queuedJob) {
+          throw new Error("Failed to start URL processing job");
+        }
+
+        updateFile(id, {
+          name: queuedJob.filename || file.name,
+          type: urlAudioOnly ? "audio/unknown" : "video/unknown",
+          progress: 12,
+          processingBaselineProgress: 12,
+          serverJobId: queuedJob.job_id,
+        });
+
+        if (previousJobId) {
+          void deleteJob(previousJobId).catch(() => undefined);
+        }
+
+        await pollJobUntilComplete(id, queuedJob.job_id);
+        return;
+      }
+
+      throw new Error("The original source is no longer available for re-processing.");
+    } catch (error) {
+      updateFile(id, {
+        status: "error",
+        progress: 100,
+        errorMessage: error instanceof Error ? error.message : "Processing failed",
+      });
+    }
+  };
+
   const handlePresetSelect = (preset: string) => {
     const presetSettings: Record<
       string,
@@ -474,6 +566,7 @@ export default function App() {
                 onClearCompleted={handleClearCompleted}
                 onToggleExpanded={handleToggleExpanded}
                 onDownloadFile={handleDownloadFile}
+                onReprocessFile={handleReprocessFile}
               />
             )}
           </div>
