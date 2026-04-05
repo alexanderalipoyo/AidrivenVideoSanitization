@@ -155,6 +155,36 @@ LANGUAGE_CODE_BY_CSV = {
 }
 
 
+def normalize_language_key(language: str) -> str:
+    return " ".join(
+        language.strip().replace("_", " ").replace("-", " ").replace(".", " ").split()
+    ).casefold()
+
+
+LANGUAGE_CODE_ALIASES: dict[str, str] = {}
+for csv_name, language_code in LANGUAGE_CODE_BY_CSV.items():
+    stem = Path(csv_name).stem
+    alias_candidates = {
+        csv_name,
+        stem,
+        stem.replace("_", " "),
+        stem.replace("_", "-"),
+        language_code,
+    }
+    for alias in alias_candidates:
+        LANGUAGE_CODE_ALIASES[normalize_language_key(alias)] = language_code
+
+LANGUAGE_CODE_ALIASES.update(
+    {
+        "mandarin": "zh-CN",
+        "mandarin chinese": "zh-CN",
+        "chinese": "zh-CN",
+        "simplified chinese": "zh-CN",
+        "brazilian portuguese": "pt",
+    }
+)
+
+
 def get_job(job_id: str) -> JobState:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -245,15 +275,15 @@ def resolve_dictionary_language(language: str) -> str:
     if not normalized_language:
         raise HTTPException(status_code=400, detail="A language is required")
 
-    normalized_key = normalized_language.casefold()
-    if normalized_key in LANGUAGE_CODE_BY_CSV:
-        return LANGUAGE_CODE_BY_CSV[normalized_key]
+    normalized_key = normalize_language_key(normalized_language)
+    if normalized_key in LANGUAGE_CODE_ALIASES:
+        return LANGUAGE_CODE_ALIASES[normalized_key]
 
     for allowed_code in LANGUAGE_CODE_BY_CSV.values():
-        if normalized_key == allowed_code.casefold():
+        if normalized_key == normalize_language_key(allowed_code):
             return allowed_code
 
-    raise HTTPException(status_code=400, detail="Unsupported language")
+    return "auto"
 
 
 def fetch_json(url: str) -> Any | None:
@@ -375,7 +405,8 @@ def fetch_fallback_dictionary_definition(term: str) -> dict[str, str] | None:
 def lookup_dictionary_definition(term: str, language: str) -> dict[str, str]:
     normalized_term = normalize_dictionary_term(term)
     language_code = resolve_dictionary_language(language)
-    cache_key = f"{language_code}:{normalized_term.casefold()}"
+    cache_language = language_code if language_code != "auto" else normalize_language_key(language)
+    cache_key = f"{cache_language}:{normalized_term.casefold()}"
 
     with DICTIONARY_CACHE_LOCK:
         cached = DICTIONARY_CACHE.get(cache_key)
@@ -388,6 +419,9 @@ def lookup_dictionary_definition(term: str, language: str) -> dict[str, str]:
             definition = fetch_fallback_dictionary_definition(normalized_term)
     else:
         definition = fetch_google_translated_meaning(normalized_term, language_code)
+
+    if definition is None and language_code == "auto":
+        definition = fetch_google_dictionary_definition(normalized_term)
 
     if definition is None and language_code != "en":
         definition = fetch_fallback_dictionary_definition(normalized_term)

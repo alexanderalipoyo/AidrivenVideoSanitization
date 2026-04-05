@@ -28,7 +28,7 @@ function DictionaryTooltipWord({ term, language, displayText, className }: Dicti
 
   const loadDefinition = async () => {
     const cachedEntry = definitionCache[cacheKey];
-    if (cachedEntry && cachedEntry.status !== 'idle') {
+    if (cachedEntry && cachedEntry.status !== 'idle' && cachedEntry.status !== 'error') {
       setDefinitionState(cachedEntry);
       return;
     }
@@ -52,7 +52,6 @@ function DictionaryTooltipWord({ term, language, displayText, className }: Dicti
         status: 'error',
         errorMessage: error instanceof Error ? error.message : 'Definition not available.',
       };
-      definitionCache[cacheKey] = errorState;
       setDefinitionState(errorState);
     }
   };
