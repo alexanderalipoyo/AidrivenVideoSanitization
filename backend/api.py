@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import mimetypes
 import os
 import shutil
@@ -10,7 +11,9 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 import whisper
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -134,6 +137,22 @@ MODEL_LOCK = threading.Lock()
 PROFANITY_LOCK = threading.Lock()
 WHISPER_MODEL: Any | None = None
 PROFANITY_MAP: dict[str, str] | None = None
+DICTIONARY_CACHE: dict[str, dict[str, str]] = {}
+DICTIONARY_CACHE_LOCK = threading.Lock()
+LANGUAGE_CODE_BY_CSV = {
+    "arabic.csv": "ar",
+    "bengali.csv": "bn",
+    "chinese_mandarin.csv": "zh-CN",
+    "english.csv": "en",
+    "french.csv": "fr",
+    "german.csv": "de",
+    "hindi.csv": "hi",
+    "japanese.csv": "ja",
+    "portuguese.csv": "pt",
+    "russian.csv": "ru",
+    "spanish.csv": "es",
+    "urdu.csv": "ur",
+}
 
 
 def get_job(job_id: str) -> JobState:
@@ -210,6 +229,176 @@ def guess_media_mime_type(file_path: Path) -> str:
     if file_path.suffix.lower() in VIDEO_EXTENSIONS:
         return "video/mp4"
     return "audio/mpeg"
+
+
+def normalize_dictionary_term(term: str) -> str:
+    normalized = " ".join(term.strip().split())
+    if not normalized:
+        raise HTTPException(status_code=400, detail="A word is required")
+    if len(normalized) > 120:
+        raise HTTPException(status_code=400, detail="Word is too long")
+    return normalized
+
+
+def resolve_dictionary_language(language: str) -> str:
+    normalized_language = language.strip()
+    if not normalized_language:
+        raise HTTPException(status_code=400, detail="A language is required")
+
+    normalized_key = normalized_language.casefold()
+    if normalized_key in LANGUAGE_CODE_BY_CSV:
+        return LANGUAGE_CODE_BY_CSV[normalized_key]
+
+    for allowed_code in LANGUAGE_CODE_BY_CSV.values():
+        if normalized_key == allowed_code.casefold():
+            return allowed_code
+
+    raise HTTPException(status_code=400, detail="Unsupported language")
+
+
+def fetch_json(url: str) -> Any | None:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        },
+    )
+    try:
+        with urlopen(request, timeout=8) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+
+def fetch_google_dictionary_definition(term: str) -> dict[str, str] | None:
+    encoded_term = quote(term)
+    payload = fetch_json(
+        "https://clients5.google.com/translate_a/t?"
+        f"client=dict-chrome-ex&sl=en&tl=en&q={encoded_term}"
+    )
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    first_value = payload[0] if payload else None
+    if isinstance(first_value, list) and first_value:
+        first_value = first_value[0]
+
+    if not isinstance(first_value, str):
+        return None
+
+    definition = first_value.strip()
+    if not definition or definition.casefold() == term.casefold():
+        return None
+
+    return {
+        "word": term,
+        "definition": definition,
+        "part_of_speech": "",
+        "source": "google",
+    }
+
+
+def fetch_google_translated_meaning(term: str, source_language: str) -> dict[str, str] | None:
+    encoded_term = quote(term)
+    payload = fetch_json(
+        "https://clients5.google.com/translate_a/single?"
+        f"client=dict-chrome-ex&sl={quote(source_language)}&tl=en&dt=t&q={encoded_term}"
+    )
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    translation_rows = payload[0]
+    if not isinstance(translation_rows, list) or not translation_rows:
+        return None
+
+    translated_parts: list[str] = []
+    for row in translation_rows:
+        if not isinstance(row, list) or not row:
+            continue
+        translated_text = row[0]
+        if isinstance(translated_text, str) and translated_text.strip():
+            translated_parts.append(translated_text.strip())
+
+    translated_definition = " ".join(translated_parts).strip()
+    if not translated_definition:
+        return None
+
+    return {
+        "word": term,
+        "definition": translated_definition,
+        "part_of_speech": "Translation",
+        "source": "google",
+    }
+
+
+def fetch_fallback_dictionary_definition(term: str) -> dict[str, str] | None:
+    encoded_term = quote(term)
+    payload = fetch_json(f"https://api.dictionaryapi.dev/api/v2/entries/en/{encoded_term}")
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    first_entry = payload[0]
+    if not isinstance(first_entry, dict):
+        return None
+
+    meanings = first_entry.get("meanings")
+    if not isinstance(meanings, list):
+        return None
+
+    for meaning in meanings:
+        if not isinstance(meaning, dict):
+            continue
+
+        definitions = meaning.get("definitions")
+        if not isinstance(definitions, list) or not definitions:
+            continue
+
+        first_definition = definitions[0]
+        if not isinstance(first_definition, dict):
+            continue
+
+        definition = str(first_definition.get("definition") or "").strip()
+        if not definition:
+            continue
+
+        return {
+            "word": str(first_entry.get("word") or term).strip() or term,
+            "definition": definition,
+            "part_of_speech": str(meaning.get("partOfSpeech") or "").strip(),
+            "source": "fallback",
+        }
+
+    return None
+
+
+def lookup_dictionary_definition(term: str, language: str) -> dict[str, str]:
+    normalized_term = normalize_dictionary_term(term)
+    language_code = resolve_dictionary_language(language)
+    cache_key = f"{language_code}:{normalized_term.casefold()}"
+
+    with DICTIONARY_CACHE_LOCK:
+        cached = DICTIONARY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    if language_code == "en":
+        definition = fetch_google_dictionary_definition(normalized_term)
+        if definition is None:
+            definition = fetch_fallback_dictionary_definition(normalized_term)
+    else:
+        definition = fetch_google_translated_meaning(normalized_term, language_code)
+
+    if definition is None and language_code != "en":
+        definition = fetch_fallback_dictionary_definition(normalized_term)
+
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Definition not found")
+
+    with DICTIONARY_CACHE_LOCK:
+        DICTIONARY_CACHE[cache_key] = definition
+
+    return definition
 
 
 def pick_downloaded_media_file(job_dir: Path) -> Path:
@@ -442,8 +631,26 @@ def get_supported_language_csv(csv_filename: str) -> tuple[str, Path]:
 
 
 def read_supported_language_entries(csv_filename: str) -> dict[str, Any]:
+    return read_supported_language_entries_page(csv_filename, offset=0, limit=100, search=None)
+
+
+def read_supported_language_entries_page(
+    csv_filename: str,
+    *,
+    offset: int,
+    limit: int,
+    search: str | None,
+) -> dict[str, Any]:
     language_name, csv_path = get_supported_language_csv(csv_filename)
     entries: list[str] = []
+    normalized_search = search.strip().casefold() if search else ""
+
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Offset must be zero or greater")
+    if limit <= 0 or limit > 500:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 500")
+
+    matched_total = 0
 
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
@@ -455,13 +662,27 @@ def read_supported_language_entries(csv_filename: str) -> dict[str, Any]:
             if not word or word.lower() == "word":
                 continue
 
+            if normalized_search and normalized_search not in word.casefold():
+                continue
+
+            matched_total += 1
+
+            if matched_total <= offset:
+                continue
+
+            if len(entries) >= limit:
+                continue
+
             entries.append(word)
 
     return {
         "name": language_name,
         "file": csv_path.name,
         "entries": entries,
-        "total": len(entries),
+        "total": matched_total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(entries) < matched_total,
     }
 
 
@@ -761,8 +982,23 @@ def get_supported_languages() -> dict[str, Any]:
 
 
 @app.get("/api/supported-languages/{csv_filename}")
-def get_supported_language_entries(csv_filename: str) -> dict[str, Any]:
-    return read_supported_language_entries(csv_filename)
+def get_supported_language_entries(
+    csv_filename: str,
+    offset: int = 0,
+    limit: int = 100,
+    search: str | None = None,
+) -> dict[str, Any]:
+    return read_supported_language_entries_page(
+        csv_filename,
+        offset=offset,
+        limit=limit,
+        search=search,
+    )
+
+
+@app.get("/api/google-dictionary")
+def get_google_dictionary_definition(word: str, language: str = "en") -> dict[str, str]:
+    return lookup_dictionary_definition(word, language)
 
 
 @app.get("/api/censor-sounds/{sound_name}")

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Languages, LoaderCircle } from "lucide-react";
 
 import {
+  fetchDictionaryDefinition,
   fetchSupportedLanguageEntries,
   fetchSupportedLanguages,
   type SupportedLanguage,
@@ -15,6 +16,15 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+
+type DefinitionState = {
+  status: "idle" | "loading" | "ready" | "error";
+  definition?: string;
+  partOfSpeech?: string;
+  source?: string;
+  errorMessage?: string;
+};
 
 export function SupportedLanguagesPage() {
   const [languages, setLanguages] = useState<SupportedLanguage[]>([]);
@@ -25,11 +35,96 @@ export function SupportedLanguagesPage() {
   const [isDialogLoading, setIsDialogLoading] = useState(false);
   const [dialogErrorMessage, setDialogErrorMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [definitionCache, setDefinitionCache] = useState<Record<string, DefinitionState>>({});
 
   const normalizedSearchTerm = searchTerm.trim().toLocaleLowerCase();
   const filteredEntries = normalizedSearchTerm
     ? languageEntries.filter((entry) => entry.toLocaleLowerCase().includes(normalizedSearchTerm))
     : languageEntries;
+
+  const loadDefinition = async (entry: string) => {
+    if (!selectedLanguage) {
+      return;
+    }
+
+    const cacheKey = `${selectedLanguage.file.toLocaleLowerCase()}:${entry.toLocaleLowerCase()}`;
+    const cachedEntry = definitionCache[cacheKey];
+    if (cachedEntry && cachedEntry.status !== "idle") {
+      return;
+    }
+
+    setDefinitionCache((prev) => ({
+      ...prev,
+      [cacheKey]: {
+        status: "loading",
+      },
+    }));
+
+    try {
+      const response = await fetchDictionaryDefinition(entry, selectedLanguage.file);
+      setDefinitionCache((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          status: "ready",
+          definition: response.definition,
+          partOfSpeech: response.part_of_speech,
+          source: response.source,
+        },
+      }));
+    } catch (error) {
+      setDefinitionCache((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          status: "error",
+          errorMessage: error instanceof Error ? error.message : "Definition not available.",
+        },
+      }));
+    }
+  };
+
+  const renderDefinitionTooltip = (entry: string) => {
+    const selectedLanguageKey = selectedLanguage?.file.toLocaleLowerCase() ?? "unknown";
+    const cacheKey = `${selectedLanguageKey}:${entry.toLocaleLowerCase()}`;
+    const definitionState = definitionCache[cacheKey];
+
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="break-all text-cyan-100 underline decoration-dotted underline-offset-4 cursor-help"
+            onMouseEnter={() => {
+              void loadDefinition(entry);
+            }}
+            onFocus={() => {
+              void loadDefinition(entry);
+            }}
+            tabIndex={0}
+          >
+            {entry}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={8} className="max-w-xs border border-slate-700 bg-slate-900 text-slate-100 shadow-xl">
+          {definitionState?.status === "ready" ? (
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-300">
+                {definitionState.partOfSpeech || "Meaning"}
+              </div>
+              <div className="text-sm leading-5 text-slate-100">{definitionState.definition}</div>
+            </div>
+          ) : definitionState?.status === "error" ? (
+            <div className="text-sm leading-5 text-rose-200">{definitionState.errorMessage || "Definition not available."}</div>
+          ) : definitionState?.status === "loading" ? (
+            <div className="flex items-center gap-2 text-sm text-slate-200">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading meaning...
+            </div>
+          ) : (
+            <div className="text-sm text-slate-200">Hover to load meaning.</div>
+          )}
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -80,6 +175,7 @@ export function SupportedLanguagesPage() {
         setIsDialogLoading(true);
         setDialogErrorMessage(null);
         setSearchTerm("");
+        setDefinitionCache({});
         const response = await fetchSupportedLanguageEntries(selectedLanguage.file);
         if (!isMounted) {
           return;
@@ -143,7 +239,7 @@ export function SupportedLanguagesPage() {
                       CSV entries
                     </div>
                     <div className="mt-1 text-sm leading-6 text-slate-400">
-                      Words loaded from the selected profanity CSV file.
+                      Words loaded from the selected profanity CSV file. Hover any word to see its meaning.
                     </div>
                   </div>
                   <div className="rounded-full bg-slate-800 px-3 py-1 text-sm text-slate-100">
@@ -174,7 +270,7 @@ export function SupportedLanguagesPage() {
                           className="grid grid-cols-[80px_1fr] gap-4 bg-slate-950 px-4 py-3 text-sm text-slate-200"
                         >
                           <span className="text-slate-500">{index + 1}</span>
-                          <span className="break-all">{entry}</span>
+                          <span className="break-all">{renderDefinitionTooltip(entry)}</span>
                         </div>
                       ))}
                     </div>

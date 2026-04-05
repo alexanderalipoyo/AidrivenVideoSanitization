@@ -86,6 +86,13 @@ export interface SupportedLanguageEntriesResponse {
   total: number;
 }
 
+export interface DictionaryDefinitionResponse {
+  word: string;
+  definition: string;
+  part_of_speech: string;
+  source: string;
+}
+
 function toApiUrl(path: string) {
   if (!apiBaseUrl) {
     return path;
@@ -203,4 +210,18 @@ export async function fetchSupportedLanguageEntries(csvFilename: string) {
   }
 
   return response.json() as Promise<SupportedLanguageEntriesResponse>;
+}
+
+export async function fetchDictionaryDefinition(word: string, language: string) {
+  const response = await fetch(
+    toApiUrl(
+      `/api/google-dictionary?word=${encodeURIComponent(word)}&language=${encodeURIComponent(language)}`,
+    ),
+  );
+  if (!response.ok) {
+    const detail = await readErrorDetail(response, "Failed to fetch dictionary definition");
+    throw new Error(detail || "Failed to fetch dictionary definition");
+  }
+
+  return response.json() as Promise<DictionaryDefinitionResponse>;
 }
