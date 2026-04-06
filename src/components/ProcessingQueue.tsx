@@ -2,11 +2,12 @@ import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';
 import { useState } from 'react';
-import { Play, X, Download, Trash2, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw, FileText } from 'lucide-react';
+import { Play, X, Download, Trash2, CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw, FileText, FileArchive } from 'lucide-react';
 import type { AudioFile } from '../App';
 import { WordSafetyReport } from './WordSafetyReport';
 import { VideoPreview } from './VideoPreview';
 import { ProfanityGraphs } from './ProfanityGraphs';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +27,7 @@ interface ProcessingQueueProps {
   onToggleExpanded: (id: string) => void;
   onDownloadFile: (id: string) => void;
   onDownloadReport: (id: string) => void | Promise<void>;
+  onDownloadBundle: (id: string) => void | Promise<void>;
   onReprocessFile: (id: string) => void;
 }
 
@@ -37,6 +39,7 @@ export function ProcessingQueue({
   onToggleExpanded,
   onDownloadFile,
   onDownloadReport,
+  onDownloadBundle,
   onReprocessFile,
 }: ProcessingQueueProps) {
   const [sectionState, setSectionState] = useState<Record<string, boolean>>({});
@@ -404,6 +407,22 @@ export function ProcessingQueue({
                           >
                             <FileText className="w-4 h-4" />
                           </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void onDownloadBundle(file.id)}
+                                className="border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400/50 hover:bg-amber-500/20 hover:text-amber-100"
+                                title="Download ZIP bundle"
+                              >
+                                <FileArchive className="w-4 h-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" sideOffset={8}>
+                              Download ZIP: PDF report + uncensored + censored media
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                       </div>
                     )}

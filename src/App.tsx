@@ -20,8 +20,9 @@ import {
 import { Button } from "./components/ui/button";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
 import { toast } from "sonner";
+import JSZip from "jszip";
 import { deleteJob, fetchDictionaryDefinition, fetchJobStatus, resolveApiAssetUrl, startProcessingJob, startProcessingUrlJob } from "./lib/api";
-import { downloadProcessingReportPdf } from "./lib/pdfReport";
+import { buildProcessingReportPdfBlob, downloadProcessingReportPdf } from "./lib/pdfReport";
 
 export interface AudioFile {
   id: string;
@@ -346,6 +347,86 @@ export default function App() {
     document.body.removeChild(anchor);
   };
 
+  const buildReportMeanings = async (file: AudioFile) => {
+    if (!file.safetyReport) {
+      return [] as Array<{ term: string; language: string; definition: string; partOfSpeech?: string; source?: string }>;
+    }
+
+    const profaneEntries = file.safetyReport.filter(
+      (entry) => entry.is_profane && entry.matched_profanity_language,
+    );
+
+    const uniqueTerms = new Map<string, { term: string; language: string }>();
+    profaneEntries.forEach((entry) => {
+      const term = entry.matched_profanity || entry.word;
+      const language = entry.matched_profanity_language;
+      const key = `${term.toLowerCase()}::${language.toLowerCase()}`;
+      if (!uniqueTerms.has(key)) {
+        uniqueTerms.set(key, { term, language });
+      }
+    });
+
+    const meaningResults = await Promise.allSettled(
+      Array.from(uniqueTerms.values()).map(async (item) => {
+        try {
+          const definition = await fetchDictionaryDefinition(item.term, item.language);
+          return {
+            term: item.term,
+            language: item.language,
+            definition: definition.definition,
+            partOfSpeech: definition.part_of_speech,
+            source: definition.source,
+          };
+        } catch {
+          return {
+            term: item.term,
+            language: item.language,
+            definition: "Definition unavailable.",
+            partOfSpeech: "",
+            source: "",
+          };
+        }
+      }),
+    );
+
+    return meaningResults.flatMap((result) => (
+      result.status === "fulfilled" ? [result.value] : []
+    ));
+  };
+
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const downloadUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(downloadUrl);
+  };
+
+  const getFileExtensionFromName = (value?: string) => {
+    if (!value) {
+      return "";
+    }
+
+    const dotIndex = value.lastIndexOf(".");
+    if (dotIndex <= 0 || dotIndex === value.length - 1) {
+      return "";
+    }
+
+    return value.slice(dotIndex);
+  };
+
+  const fetchAssetBlob = async (assetUrl: string, label: string) => {
+    const response = await fetch(assetUrl);
+    if (!response.ok) {
+      throw new Error(`Unable to download ${label}`);
+    }
+
+    return response.blob();
+  };
+
   const handleDownloadReport = async (id: string) => {
     const file = files.find((entry) => entry.id === id);
     if (!file || file.status !== "completed" || !file.safetyReport) {
@@ -356,46 +437,7 @@ export default function App() {
     const loadingToastId = toast.loading("Preparing PDF report...");
 
     try {
-      const profaneEntries = file.safetyReport.filter(
-        (entry) => entry.is_profane && entry.matched_profanity_language,
-      );
-
-      const uniqueTerms = new Map<string, { term: string; language: string }>();
-      profaneEntries.forEach((entry) => {
-        const term = entry.matched_profanity || entry.word;
-        const language = entry.matched_profanity_language;
-        const key = `${term.toLowerCase()}::${language.toLowerCase()}`;
-        if (!uniqueTerms.has(key)) {
-          uniqueTerms.set(key, { term, language });
-        }
-      });
-
-      const meaningResults = await Promise.allSettled(
-        Array.from(uniqueTerms.values()).map(async (item) => {
-          try {
-            const definition = await fetchDictionaryDefinition(item.term, item.language);
-            return {
-              term: item.term,
-              language: item.language,
-              definition: definition.definition,
-              partOfSpeech: definition.part_of_speech,
-              source: definition.source,
-            };
-          } catch {
-            return {
-              term: item.term,
-              language: item.language,
-              definition: "Definition unavailable.",
-              partOfSpeech: "",
-              source: "",
-            };
-          }
-        }),
-      );
-
-      const meanings = meaningResults
-        .filter((result): result is PromiseFulfilledResult<{ term: string; language: string; definition: string; partOfSpeech?: string; source?: string }> => result.status === "fulfilled")
-        .map((result) => result.value);
+      const meanings = await buildReportMeanings(file);
 
       downloadProcessingReportPdf({
         file,
@@ -407,6 +449,46 @@ export default function App() {
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to generate report", {
+        id: loadingToastId,
+      });
+    }
+  };
+
+  const handleDownloadBundle = async (id: string) => {
+    const file = files.find((entry) => entry.id === id);
+    if (!file || file.status !== "completed" || !file.safetyReport || !file.previewUrl || !file.outputUrl) {
+      toast.error("ZIP export is only available for completed items with full outputs");
+      return;
+    }
+
+    const loadingToastId = toast.loading("Preparing ZIP bundle...");
+
+    try {
+      const meanings = await buildReportMeanings(file);
+      const [uncensoredBlob, censoredBlob, pdfBlob] = await Promise.all([
+        fetchAssetBlob(file.previewUrl, "uncensored media"),
+        fetchAssetBlob(file.outputUrl, "censored media"),
+        Promise.resolve(buildProcessingReportPdfBlob({ file, meanings })),
+      ]);
+
+      const zip = new JSZip();
+
+      const outputExt = getFileExtensionFromName(file.outputFilename) || ".mp4";
+      const sourceExt = getFileExtensionFromName(file.name) || outputExt;
+      const baseName = (file.outputFilename || file.name || "processed-media").replace(/\.[^/.]+$/, "");
+
+      zip.file(`${baseName}-uncensored${sourceExt}`, uncensoredBlob);
+      zip.file(`${baseName}-censored${outputExt}`, censoredBlob);
+      zip.file(`${baseName}-report.pdf`, pdfBlob);
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      triggerBlobDownload(zipBlob, `${baseName}-bundle.zip`);
+
+      toast.success("ZIP bundle downloaded", {
+        id: loadingToastId,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to build ZIP bundle", {
         id: loadingToastId,
       });
     }
@@ -643,6 +725,7 @@ export default function App() {
                 onToggleExpanded={handleToggleExpanded}
                 onDownloadFile={handleDownloadFile}
                 onDownloadReport={handleDownloadReport}
+                onDownloadBundle={handleDownloadBundle}
                 onReprocessFile={handleReprocessFile}
               />
             )}
