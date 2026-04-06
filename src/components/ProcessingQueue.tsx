@@ -201,7 +201,7 @@ export function ProcessingQueue({
   };
 
   const handleRemoveClick = (file: AudioFile) => {
-    if (file.status === 'completed') {
+    if (file.status === 'completed' || file.status === 'processing') {
       setClearCompletedPending(false);
       setFilePendingRemoval(file);
       return;
@@ -448,13 +448,19 @@ export function ProcessingQueue({
         <AlertDialogContent className="border-slate-800 bg-slate-950 text-slate-100">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {clearCompletedPending ? 'Clear all completed items?' : 'Delete completed item?'}
+              {clearCompletedPending
+                ? 'Clear all completed items?'
+                : filePendingRemoval?.status === 'processing'
+                  ? 'Delete processing item?'
+                  : 'Delete completed item?'}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-slate-400">
               {clearCompletedPending
                 ? 'This will remove every completed result from the processing queue. Processed files, previews, and analysis panels for those completed items will no longer be available in this list.'
                 : filePendingRemoval
-                  ? `This will remove ${filePendingRemoval.name} from the processing queue, including its completed preview and analysis details shown in the queue.`
+                  ? filePendingRemoval.status === 'processing'
+                    ? `This will remove ${filePendingRemoval.name} while it is still processing. You can continue working, but this item will no longer be shown in the queue.`
+                    : `This will remove ${filePendingRemoval.name} from the processing queue, including its completed preview and analysis details shown in the queue.`
                   : 'This will remove the completed item from the processing queue and hide its preview and analysis details from this list.'}
             </AlertDialogDescription>
           </AlertDialogHeader>

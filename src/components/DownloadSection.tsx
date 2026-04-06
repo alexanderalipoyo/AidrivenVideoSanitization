@@ -45,6 +45,17 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
       };
     }
 
+    if (
+      normalizedMessage.includes('http error 404')
+      || normalizedMessage.includes('404: not found')
+      || (normalizedMessage.includes('not found') && normalizedMessage.includes('unable to download webpage'))
+    ) {
+      return {
+        rawType: 'HTTP 404 Not Found',
+        detail: 'The media page could not be found on the source platform. The post/video may be deleted, private, geo-restricted, or the link may be incomplete. Open the URL in your browser to verify it is still publicly accessible.',
+      };
+    }
+
     return {
       rawType: message || undefined,
       detail: message || 'Could not process the supplied URL.',
