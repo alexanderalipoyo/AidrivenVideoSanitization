@@ -486,6 +486,21 @@ def extract_playlist_entries(media_url: str) -> tuple[str | None, list[dict[str,
     return playlist_title, entries
 
 
+def validate_supported_media_url(media_url: str) -> None:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
+
+    try:
+        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}) as downloader:
+            metadata = downloader.extract_info(media_url, download=False)
+    except Exception as exc:
+        message = str(exc).strip() or "Unsupported URL"
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=400, detail=f"Unsupported URL: {media_url}")
+
+
 def download_media_from_url(
     job_id: str,
     media_url: str,
@@ -1099,6 +1114,7 @@ def start_url_processing(request: UrlProcessingRequest) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="No playable entries were found in the playlist")
         jobs_to_queue = playlist_entries
     else:
+        validate_supported_media_url(media_url)
         jobs_to_queue = [{"url": media_url, "title": source_host}]
 
     queued_jobs: list[dict[str, str]] = []

@@ -43,6 +43,8 @@ export function ProcessingQueue({
   const hasPendingFiles = files.some(f => f.status === 'pending');
   const hasCompletedFiles = files.some(f => f.status === 'completed');
   const isProcessing = files.some(f => f.status === 'processing');
+  const pendingCount = files.filter((file) => file.status === 'pending').length;
+  const completedCount = files.filter((file) => file.status === 'completed').length;
   const sortedFiles = files
     .map((file, index) => ({ file, index }))
     .sort((left, right) => {
@@ -234,9 +236,26 @@ export function ProcessingQueue({
     <>
       <Card className="bg-slate-900/50 border-slate-800">
         <div className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-slate-100">Processing Queue ({files.length})</h3>
-          <div className="flex gap-2">
+        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+          <div className="md:justify-self-start">
+            <h3 className="text-slate-100">Processing Queue</h3>
+            <p className="text-xs text-slate-400">Live status overview for your uploaded jobs</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 md:justify-self-center">
+            <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-center text-xs font-medium text-cyan-100">
+              <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Total</span>
+              <span className="text-sm font-semibold leading-none">{files.length}</span>
+            </div>
+            <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-center text-xs font-medium text-amber-100">
+              <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Pending</span>
+              <span className="text-sm font-semibold leading-none">{pendingCount}</span>
+            </div>
+            <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-center text-xs font-medium text-emerald-100">
+              <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Completed</span>
+              <span className="text-sm font-semibold leading-none">{completedCount}</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 md:justify-self-end">
             {hasCompletedFiles && (
               <Button
                 variant="outline"

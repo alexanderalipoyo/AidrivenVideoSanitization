@@ -4,10 +4,9 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
-import { Download, Link, Info } from 'lucide-react';
+import { Download, Link, Info, AlertTriangle } from 'lucide-react';
 import type { ConversionSettings } from '../App';
 import { FormatSelector } from './FormatSelector';
-import { toast } from 'sonner';
 
 interface DownloadSectionProps {
   settings: ConversionSettings;
@@ -20,15 +19,36 @@ interface DownloadSectionProps {
 export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: DownloadSectionProps) {
   const [url, setUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<{ detail: string; rawType?: string } | null>(null);
 
-  const getUrlErrorDescription = (error: unknown) => {
-    const message = error instanceof Error ? error.message : '';
+  const stripAnsi = (value: string) => value.replace(/\x1B\[[0-9;]*m/g, '').trim();
+
+  const getUrlErrorDescription = (error: unknown): { detail: string; rawType?: string } => {
+    const message = error instanceof Error ? stripAnsi(error.message) : '';
+    const normalizedMessage = message.toLowerCase();
 
     if (message === 'A valid http or https URL is required') {
-      return 'Enter a full link starting with http:// or https://. Example: https://www.youtube.com/watch?v=...';
+      return {
+        detail: 'Enter a full link starting with http:// or https://. Example: https://www.youtube.com/watch?v=...',
+      };
     }
 
-    return message || 'Could not process the supplied URL.';
+    if (
+      normalizedMessage.includes('unsupported url')
+      || normalizedMessage.includes('no suitable extractor')
+      || normalizedMessage.includes('did not produce a supported media file')
+      || normalizedMessage.includes('no playable entries')
+    ) {
+      return {
+        rawType: message,
+        detail: 'This URL is not currently supported. Try a public media link from YouTube, SoundCloud, Vimeo, Facebook, TikTok, X, or Bandcamp.',
+      };
+    }
+
+    return {
+      rawType: message || undefined,
+      detail: message || 'Could not process the supplied URL.',
+    };
   };
 
   const handleDownload = async () => {
@@ -36,6 +56,7 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
       return;
     }
 
+    setSubmitError(null);
     setIsSubmitting(true);
     try {
       await onUrlAdded({
@@ -43,9 +64,7 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
       });
       setUrl('');
     } catch (error) {
-      toast.error('Failed to start URL processing', {
-        description: getUrlErrorDescription(error),
-      });
+      setSubmitError(getUrlErrorDescription(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -96,6 +115,18 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                   {isSubmitting ? 'Starting...' : 'Download'}
                 </Button>
               </div>
+              {submitError && (
+                <Alert className="border-red-500/40 bg-red-500/10 text-red-100">
+                  <AlertTriangle className="h-4 w-4 text-red-300" />
+                  <AlertDescription className="space-y-1">
+                    <p className="font-medium">Unable to process this URL</p>
+                    {submitError.rawType && (
+                      <p className="text-xs text-red-200/80">{submitError.rawType}</p>
+                    )}
+                    <p className="text-sm text-red-200/95">{submitError.detail}</p>
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
 
           </div>
