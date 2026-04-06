@@ -194,7 +194,7 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
 
   let afterSpecsY = getLastTableY(doc, currentY + 80);
   currentY = getNextSectionStartY(doc, afterSpecsY);
-  drawSectionHeading(doc, '2. Analytics Summary (Profanity Dashboard)', currentY);
+  drawSectionHeading(doc, '2. Analytics Summary', currentY);
 
   const profanityRate = report.length > 0 ? ((profaneRows.length / report.length) * 100).toFixed(1) : '0.0';
 
@@ -275,25 +275,23 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
   autoTable(doc, {
     startY: currentY + SECTION_TITLE_OFFSET,
     margin: { top: CONTENT_START_Y, left: PAGE_MARGIN_X, right: PAGE_MARGIN_X, bottom: FOOTER_RESERVED },
-    head: [['Term', 'Language', 'Meaning', 'Part of Speech', 'Source']],
+    head: [['Term', 'Language', 'Meaning', 'Part of Speech']],
     body: meanings.length > 0
       ? meanings.map((item) => [
           item.term,
           item.language,
           item.definition,
           item.partOfSpeech || '-',
-          item.source || '-',
         ])
-      : [['-', '-', 'No dictionary meanings available for this report.', '-', '-']],
+      : [['-', '-', 'No dictionary meanings available for this report.', '-']],
     theme: 'grid',
     styles: { fontSize: 8.5, cellPadding: 4, overflow: 'linebreak', valign: 'middle' },
     headStyles: { fillColor: [16, 185, 129], halign: 'left', valign: 'middle' },
     columnStyles: {
-      0: { cellWidth: 90 },
+      0: { cellWidth: 95 },
       1: { cellWidth: 65 },
-      2: { cellWidth: 240 },
-      3: { cellWidth: 95 },
-      4: { cellWidth: 50 },
+      2: { cellWidth: 280 },
+      3: { cellWidth: 100 },
     },
     didDrawPage: (data) => {
       if (data.pageNumber > 1) {
@@ -333,6 +331,20 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
       6: { cellWidth: 50 },
       7: { cellWidth: 62, halign: 'right' },
       8: { cellWidth: 62, halign: 'right' },
+    },
+    didParseCell: (data) => {
+      if (data.section !== 'body') {
+        return;
+      }
+
+      const row = report[data.row.index];
+      if (!row || !row.is_profane) {
+        return;
+      }
+
+      data.cell.styles.textColor = [185, 28, 28];
+      data.cell.styles.fontStyle = 'bold';
+      data.cell.styles.fillColor = [254, 242, 242];
     },
     didDrawPage: (data) => {
       if (data.pageNumber > 1) {
