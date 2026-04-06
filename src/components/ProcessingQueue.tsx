@@ -88,8 +88,25 @@ export function ProcessingQueue({
       parts.push(formatFileSize(file.size));
     }
 
-    parts.push(file.status);
-    return parts.join(' • ');
+    if (file.status !== 'completed') {
+      parts.push(file.status);
+    }
+
+    return parts.length > 0 ? parts.join(' • ') : null;
+  };
+
+  const formatCompletedAt = (completedAt?: number) => {
+    if (!completedAt) {
+      return null;
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(completedAt));
   };
 
   const formatEta = (remainingMs: number) => {
@@ -230,9 +247,16 @@ export function ProcessingQueue({
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex-1 min-w-0">
                         <p className="break-all text-slate-200">{file.url || file.name}</p>
-                        <p className="text-xs text-slate-500">
-                          {buildMetadataLabel(file)}
-                        </p>
+                        {buildMetadataLabel(file) && (
+                          <p className="text-xs text-slate-500">
+                            {buildMetadataLabel(file)}
+                          </p>
+                        )}
+                        {file.status === 'completed' && file.completedAt && (
+                          <p className="text-xs text-emerald-400/80 mt-1">
+                            Completed {formatCompletedAt(file.completedAt)}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex gap-2">
@@ -276,16 +300,16 @@ export function ProcessingQueue({
                     </div>
 
                     {/* Progress Bar */}
-                    {(file.status === 'processing' || file.status === 'completed') && (
+                    {file.status === 'processing' && (
                       <div className="space-y-1">
                         <Progress 
                           value={file.progress} 
                           className="h-1.5 bg-slate-800"
                         />
-                          <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-                            <p>{Math.round(file.progress)}% complete</p>
-                            {file.status === 'processing' && <p>{getEtaLabel(file)}</p>}
-                          </div>
+                        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+                          <p>{Math.round(file.progress)}% complete</p>
+                          <p>{getEtaLabel(file)}</p>
+                        </div>
                       </div>
                     )}
 

@@ -41,6 +41,7 @@ export interface AudioFile {
   serverJobId?: string;
   processingStartedAt?: number;
   processingBaselineProgress?: number;
+  completedAt?: number;
   transcription?: {
     segments: Array<{
       words: Array<{
@@ -180,6 +181,7 @@ export default function App() {
         updateFile(fileId, {
           status: "completed",
           progress: 100,
+          completedAt: Date.now(),
           transcription: job.result.transcription,
           safetyReport: job.result.safety_report,
           previewUrl: resolveApiAssetUrl(job.result.source_url),
@@ -242,6 +244,7 @@ export default function App() {
           progress: 5,
           requestedFormat: processingSettings.format,
           errorMessage: undefined,
+          completedAt: undefined,
           processingStartedAt,
           processingBaselineProgress: 5,
         });
@@ -351,6 +354,7 @@ export default function App() {
       progress: 5,
       requestedFormat: processingSettings.format,
       errorMessage: undefined,
+      completedAt: undefined,
       outputUrl: undefined,
       outputMimeType: undefined,
       outputPreviewUrl: undefined,
