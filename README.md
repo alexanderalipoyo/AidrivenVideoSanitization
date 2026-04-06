@@ -1,9 +1,37 @@
 
 # AI-Driven Audio Sanitization
 
+<p align="center">
+	<img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNnAzb3h3cnQ5eDM4Y2YwNWJkbmx1c3g3YjR1YWNhZjE4bXM5Mm5veSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/II7ZbN0k88lI4OZt9j/giphy.gif" alt="Audio sanitization preview" width="420" />
+</p>
+
 AI-Driven Audio Sanitization is a Vite + React frontend with a FastAPI backend for detecting profane words in audio or video, generating word-level timestamps with Whisper, and exporting sanitized media with censored audio.
 
 It supports both local file uploads and remote media import through supported URLs.
+
+## Quick start
+
+```bash
+npm install
+python -m venv .venv
+```
+
+Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run in two terminals:
+
+```bash
+npm run api
+npm run dev
+```
+
+Frontend: `http://localhost:5173`  
+Backend API: `http://127.0.0.1:8000`
 
 ## Features
 
@@ -20,6 +48,25 @@ It supports both local file uploads and remote media import through supported UR
 - Track per-job queue progress with estimated time remaining while processing
 - Re-process completed jobs with the latest output settings directly from the queue
 - Clear completed jobs from both the queue and backend storage
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Tech stack](#tech-stack)
+- [Project structure](#project-structure)
+- [Requirements](#requirements)
+- [Setup](#setup)
+- [Running locally](#running-locally)
+- [Supported workflows](#supported-workflows)
+- [Media formats](#media-formats)
+- [Output settings](#output-settings)
+- [Censor types](#censor-types)
+- [Profanity dictionaries](#profanity-dictionaries)
+- [Processing flow](#processing-flow)
+- [API overview](#api-overview)
+- [Troubleshooting](#troubleshooting)
+- [Validation](#validation)
 
 ## Tech stack
 
@@ -215,7 +262,7 @@ backend_data/vbw_classify.csv
 6. Watch queue progress, including estimated time remaining for active jobs.
 7. Review the safety report, analytics, and original/sanitized previews.
 8. Download the sanitized result or re-process a completed item with updated settings.
-8. Clear completed items when you want to reclaim disk space in `backend_data/jobs/`.
+9. Clear completed items when you want to reclaim disk space in `backend_data/jobs/`.
 
 ## API overview
 
