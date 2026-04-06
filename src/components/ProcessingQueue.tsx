@@ -43,6 +43,7 @@ export function ProcessingQueue({
   const hasPendingFiles = files.some(f => f.status === 'pending');
   const hasCompletedFiles = files.some(f => f.status === 'completed');
   const isProcessing = files.some(f => f.status === 'processing');
+  const processingCount = files.filter((file) => file.status === 'processing').length;
   const pendingCount = files.filter((file) => file.status === 'pending').length;
   const completedCount = files.filter((file) => file.status === 'completed').length;
   const sortedFiles = files
@@ -249,6 +250,10 @@ export function ProcessingQueue({
             <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-center text-xs font-medium text-amber-100">
               <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Pending</span>
               <span className="text-sm font-semibold leading-none">{pendingCount}</span>
+            </div>
+            <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-center text-xs font-medium text-violet-100">
+              <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Processing</span>
+              <span className="text-sm font-semibold leading-none">{processingCount}</span>
             </div>
             <div className="inline-flex min-w-[78px] flex-col items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-center text-xs font-medium text-emerald-100">
               <span className="uppercase tracking-[0.08em] text-[10px] opacity-90">Completed</span>

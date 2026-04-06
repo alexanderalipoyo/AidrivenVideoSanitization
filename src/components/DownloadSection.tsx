@@ -4,9 +4,10 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
-import { Download, Link, Info, AlertTriangle } from 'lucide-react';
+import { Download, Link, Info } from 'lucide-react';
 import type { ConversionSettings } from '../App';
 import { FormatSelector } from './FormatSelector';
+import { toast } from 'sonner';
 
 interface DownloadSectionProps {
   settings: ConversionSettings;
@@ -19,7 +20,6 @@ interface DownloadSectionProps {
 export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: DownloadSectionProps) {
   const [url, setUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<{ detail: string; rawType?: string } | null>(null);
 
   const stripAnsi = (value: string) => value.replace(/\x1B\[[0-9;]*m/g, '').trim();
 
@@ -56,7 +56,6 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
       return;
     }
 
-    setSubmitError(null);
     setIsSubmitting(true);
     try {
       await onUrlAdded({
@@ -64,7 +63,13 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
       });
       setUrl('');
     } catch (error) {
-      setSubmitError(getUrlErrorDescription(error));
+      const parsedError = getUrlErrorDescription(error);
+      toast.error('Unable to process this URL', {
+        duration: 5000,
+        description: parsedError.rawType
+          ? `${parsedError.rawType}\n${parsedError.detail}`
+          : parsedError.detail,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -115,18 +120,6 @@ export function DownloadSection({ settings, onSettingsChange, onUrlAdded }: Down
                   {isSubmitting ? 'Starting...' : 'Download'}
                 </Button>
               </div>
-              {submitError && (
-                <Alert className="border-red-500/40 bg-red-500/10 text-red-100">
-                  <AlertTriangle className="h-4 w-4 text-red-300" />
-                  <AlertDescription className="space-y-1">
-                    <p className="font-medium">Unable to process this URL</p>
-                    {submitError.rawType && (
-                      <p className="text-xs text-red-200/80">{submitError.rawType}</p>
-                    )}
-                    <p className="text-sm text-red-200/95">{submitError.detail}</p>
-                  </AlertDescription>
-                </Alert>
-              )}
             </div>
 
           </div>
