@@ -95,7 +95,13 @@ export function FormatSelector({ settings, onSettingsChange, showAudioOnly = fal
 
         <div className="space-y-4">
           {showAudioOnly && (
-            <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+            <div
+              className={`flex items-center justify-between rounded-lg border p-3 transition-all ${
+                settings.audioOnly
+                  ? 'border-emerald-500/40 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(16,185,129,0.2)]'
+                  : 'border-slate-800 bg-slate-950/50'
+              }`}
+            >
               <div className="flex items-center gap-3">
                 <Music className="h-4 w-4 text-violet-400" />
                 <div>
@@ -106,7 +112,7 @@ export function FormatSelector({ settings, onSettingsChange, showAudioOnly = fal
               <Switch
                 checked={settings.audioOnly}
                 onCheckedChange={(value) => onSettingsChange({ ...settings, audioOnly: value })}
-                className="data-[state=checked]:bg-cyan-500 data-[state=checked]:shadow-[0_0_0_3px_rgba(6,182,212,0.25)] data-[state=unchecked]:bg-slate-700 focus-visible:ring-cyan-400/50"
+                className="border border-slate-500/70 data-[state=checked]:border-emerald-300/70 data-[state=checked]:bg-emerald-500 data-[state=checked]:shadow-[0_0_0_3px_rgba(16,185,129,0.32)] data-[state=unchecked]:bg-slate-700 focus-visible:ring-emerald-400/60 [&_[data-slot=switch-thumb]]:bg-slate-200 data-[state=checked]:[&_[data-slot=switch-thumb]]:bg-white"
               />
             </div>
           )}
