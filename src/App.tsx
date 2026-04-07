@@ -670,7 +670,7 @@ export default function App() {
           <div className="space-y-6">
             <Tabs
               value={activeWorkspaceTab}
-              onValueChange={(value) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
+              onValueChange={(value: string) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
               className="space-y-6"
             >
               <TabsList className="w-fit border border-slate-800 bg-slate-900/50">

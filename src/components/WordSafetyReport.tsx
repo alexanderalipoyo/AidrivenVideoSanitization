@@ -43,7 +43,7 @@ export function WordSafetyReport({ file, showHeader = true }: WordSafetyReportPr
   const profaneCount = file.safetyReport.filter(w => w.is_profane).length;
   const pageSize = 10;
   const maxTime = useMemo(
-    () => file.safetyReport.reduce((highest, item) => Math.max(highest, item.end), 0),
+    () => (file.safetyReport ?? []).reduce((highest, item) => Math.max(highest, item.end), 0),
     [file.safetyReport],
   );
 
@@ -67,7 +67,7 @@ export function WordSafetyReport({ file, showHeader = true }: WordSafetyReportPr
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const [rangeStart, rangeEnd] = timeRange;
 
-    return file.safetyReport.filter((item) => {
+    return (file.safetyReport ?? []).filter((item) => {
       const matchesSearch = normalizedSearch.length === 0
         || item.word.toLowerCase().includes(normalizedSearch)
         || (item.matched_profanity || '').toLowerCase().includes(normalizedSearch);
