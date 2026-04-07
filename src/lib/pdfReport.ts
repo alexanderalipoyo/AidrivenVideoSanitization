@@ -55,6 +55,22 @@ const sanitizeFilename = (value: string) =>
     .replace(/\s+/g, '_')
     .slice(0, 80);
 
+const stripExtension = (value: string) => value.replace(/\.[^/.]+$/, '');
+
+const getReportBaseName = (file: AudioFile) => {
+  const sourceName = (file.name || '').trim();
+  if (sourceName) {
+    return stripExtension(sourceName) || sourceName;
+  }
+
+  const outputName = (file.outputFilename || '').trim();
+  if (outputName) {
+    return stripExtension(outputName) || outputName;
+  }
+
+  return 'processing-report';
+};
+
 const drawBrandMark = (doc: jsPDF, x: number, y: number, size: number) => {
   doc.setFillColor(124, 58, 237);
   doc.roundedRect(x, y, size, size, 6, 6, 'F');
@@ -179,8 +195,6 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
       ['Source URL', file.url || 'N/A'],
       ['Input MIME Type', file.type || 'Unknown'],
       ['Input Size', formatBytes(file.size)],
-      ['Requested Format', file.requestedFormat || 'Unknown'],
-      ['Output Filename', file.outputFilename || 'Not available'],
       ['Completed Datetime', formatDateTime(file.completedAt)],
     ],
     theme: 'grid',
@@ -360,8 +374,8 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
     drawPageFooter(doc, page, totalPages);
   }
 
-  const fileLabel = file.outputFilename || file.name || 'processing-report';
-  doc.save(`${sanitizeFilename(fileLabel)}-report.pdf`);
+  const fileLabel = getReportBaseName(file);
+  doc.save(`${sanitizeFilename(fileLabel)}.pdf`);
 }
 
 export function buildProcessingReportPdfBlob({ file, meanings }: ReportOptions) {
@@ -406,8 +420,6 @@ export function buildProcessingReportPdfBlob({ file, meanings }: ReportOptions) 
       ['Source URL', file.url || 'N/A'],
       ['Input MIME Type', file.type || 'Unknown'],
       ['Input Size', formatBytes(file.size)],
-      ['Requested Format', file.requestedFormat || 'Unknown'],
-      ['Output Filename', file.outputFilename || 'Not available'],
       ['Completed Datetime', formatDateTime(file.completedAt)],
     ],
     theme: 'grid',

@@ -446,12 +446,84 @@ def pick_downloaded_media_file(job_dir: Path) -> Path:
     return max(candidates, key=lambda path: (path.stat().st_size, path.stat().st_mtime))
 
 
+def get_yt_dlp_cookie_file() -> Path | None:
+    raw_cookie_file = os.getenv("YTDLP_COOKIES_FILE", "").strip()
+    if not raw_cookie_file:
+        return None
+
+    cookie_file = Path(raw_cookie_file).expanduser()
+    if cookie_file.exists() and cookie_file.is_file():
+        return cookie_file
+
+    return None
+
+
+def get_yt_dlp_cookies_from_browser() -> tuple[str, ...] | None:
+    browser_name = os.getenv("YTDLP_COOKIES_BROWSER", "").strip()
+    browser_profile = os.getenv("YTDLP_COOKIES_PROFILE", "").strip()
+
+    if not browser_name:
+        return None
+
+    if browser_profile:
+        return (browser_name, browser_profile)
+
+    return (browser_name,)
+
+
+def build_yt_dlp_options(*, skip_download: bool, noplaylist: bool) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": skip_download,
+        "noplaylist": noplaylist,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+    }
+
+    cookie_file = get_yt_dlp_cookie_file()
+    if cookie_file is not None:
+        options["cookiefile"] = str(cookie_file)
+        return options
+
+    cookies_from_browser = get_yt_dlp_cookies_from_browser()
+    if cookies_from_browser is not None:
+        options["cookiesfrombrowser"] = cookies_from_browser
+
+    return options
+
+
+def format_yt_dlp_error_message(exc: Exception) -> str:
+    message = str(exc).strip() or "yt-dlp failed to download media"
+    lowered = message.casefold()
+    bot_check_markers = [
+        "sign in to confirm you're not a bot",
+        "sign in to confirm you\u2019re not a bot",
+    ]
+    if any(marker in lowered for marker in bot_check_markers):
+        return (
+            "YouTube blocked this request with a bot-check. "
+            "Set YTDLP_COOKIES_FILE to a cookies.txt export, or set "
+            "YTDLP_COOKIES_BROWSER (and optionally YTDLP_COOKIES_PROFILE), "
+            "then restart the backend."
+        )
+
+    return message
+
+
 def extract_playlist_entries(media_url: str) -> tuple[str | None, list[dict[str, str]]]:
     if yt_dlp is None:
         raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
 
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as downloader:
-        metadata = downloader.extract_info(media_url, download=False)
+    options = build_yt_dlp_options(skip_download=True, noplaylist=False)
+    try:
+        with yt_dlp.YoutubeDL(options) as downloader:
+            metadata = downloader.extract_info(media_url, download=False)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=format_yt_dlp_error_message(exc)) from exc
 
     raw_entries = metadata.get("entries") or []
     playlist_title = str(metadata.get("title") or "").strip() or None
@@ -491,10 +563,10 @@ def validate_supported_media_url(media_url: str) -> None:
         raise RuntimeError("yt-dlp is not installed. Run pip install -r requirements.txt.")
 
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}) as downloader:
+        with yt_dlp.YoutubeDL(build_yt_dlp_options(skip_download=True, noplaylist=True)) as downloader:
             metadata = downloader.extract_info(media_url, download=False)
     except Exception as exc:
-        message = str(exc).strip() or "Unsupported URL"
+        message = format_yt_dlp_error_message(exc)
         raise HTTPException(status_code=400, detail=message) from exc
 
     if not isinstance(metadata, dict):
@@ -512,21 +584,25 @@ def download_media_from_url(
     job_dir = job.input_path.parent
     fallback_stem = build_safe_filename_stem(job.filename, "download", max_length=48)
 
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}) as preview_downloader:
-        preview_metadata = preview_downloader.extract_info(media_url, download=False)
+    preview_options = build_yt_dlp_options(skip_download=True, noplaylist=True)
+    try:
+        with yt_dlp.YoutubeDL(preview_options) as preview_downloader:
+            preview_metadata = preview_downloader.extract_info(media_url, download=False)
+    except Exception as exc:
+        raise RuntimeError(format_yt_dlp_error_message(exc)) from exc
 
     media_title = str(preview_metadata.get("title") or job.filename).strip() or job.filename
     has_video_stream = str(preview_metadata.get("vcodec") or "none").lower() != "none"
     media_id = build_safe_filename_token(str(preview_metadata.get("id") or job_id), job_id[:12])
     safe_stem = build_safe_filename_stem(media_title, fallback_stem, max_length=48)
     output_template = str(job_dir / f"{safe_stem}-{media_id}.%(ext)s")
-    ydl_options: dict[str, Any] = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "nopart": True,
-        "outtmpl": output_template,
-    }
+    ydl_options = build_yt_dlp_options(skip_download=False, noplaylist=True)
+    ydl_options.update(
+        {
+            "nopart": True,
+            "outtmpl": output_template,
+        }
+    )
 
     if has_video_stream:
         ydl_options.update(
@@ -541,8 +617,11 @@ def download_media_from_url(
             }
         )
 
-    with yt_dlp.YoutubeDL(ydl_options) as downloader:
-        downloader.extract_info(media_url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(ydl_options) as downloader:
+            downloader.extract_info(media_url, download=True)
+    except Exception as exc:
+        raise RuntimeError(format_yt_dlp_error_message(exc)) from exc
 
     downloaded_path = pick_downloaded_media_file(job_dir)
     return downloaded_path, guess_media_mime_type(downloaded_path), media_title
@@ -871,13 +950,79 @@ def sanitize_audio(input_path: Path, intervals: list[dict[str, Any]], censor_typ
     sanitized_audio.export(str(output_path), **export_kwargs)
 
 
+def build_non_conflicting_output_path(job_dir: Path, filename: str, input_path: Path) -> Path:
+    candidate = job_dir / filename
+    if candidate.resolve() != input_path.resolve():
+        return candidate
+
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    fallback_candidate = job_dir / f"{stem}_processed{suffix}"
+    if fallback_candidate.resolve() != input_path.resolve():
+        return fallback_candidate
+
+    index = 2
+    while True:
+        indexed_candidate = job_dir / f"{stem}_processed_{index}{suffix}"
+        if indexed_candidate.resolve() != input_path.resolve():
+            return indexed_candidate
+        index += 1
+
+
 def mux_video_with_audio(video_path: Path, audio_path: Path, output_path: Path) -> None:
     suffix = output_path.suffix.lower()
-    video_codec = "mpeg4" if suffix == ".avi" else "libx264"
     audio_codec = "libmp3lame" if suffix == ".avi" else "aac"
-    command = [
+    temp_output_path = output_path.with_name(f"{output_path.stem}.muxing{output_path.suffix}")
+    if temp_output_path.exists():
+        temp_output_path.unlink()
+
+    # First, try stream-copy for video to avoid decode failures on quirky sources.
+    copy_video_command = [
         "ffmpeg",
         "-y",
+        "-analyzeduration",
+        "200M",
+        "-probesize",
+        "200M",
+        "-fflags",
+        "+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        audio_codec,
+        "-shortest",
+        str(temp_output_path),
+    ]
+    copy_completed = subprocess.run(copy_video_command, capture_output=True, text=True, check=False)
+    if copy_completed.returncode == 0:
+        os.replace(str(temp_output_path), str(output_path))
+        return
+
+    if temp_output_path.exists():
+        temp_output_path.unlink()
+
+    video_codec = "mpeg4" if suffix == ".avi" else "libx264"
+    transcode_command = [
+        "ffmpeg",
+        "-y",
+        "-analyzeduration",
+        "200M",
+        "-probesize",
+        "200M",
+        "-fflags",
+        "+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
         "-i",
         str(video_path),
         "-i",
@@ -891,11 +1036,23 @@ def mux_video_with_audio(video_path: Path, audio_path: Path, output_path: Path) 
         "-c:a",
         audio_codec,
         "-shortest",
-        str(output_path),
+        str(temp_output_path),
     ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip() or "ffmpeg failed to mux video")
+    transcode_completed = subprocess.run(transcode_command, capture_output=True, text=True, check=False)
+    if transcode_completed.returncode == 0:
+        os.replace(str(temp_output_path), str(output_path))
+        return
+
+    if temp_output_path.exists():
+        temp_output_path.unlink()
+    if transcode_completed.returncode != 0:
+        primary_error = (copy_completed.stderr or "").strip()
+        fallback_error = (transcode_completed.stderr or "").strip()
+        raise RuntimeError(
+            "ffmpeg failed to mux video. "
+            f"copy attempt: {primary_error or 'unknown error'}. "
+            f"transcode fallback: {fallback_error or 'unknown error'}."
+        )
 
 
 def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> tuple[Path, str, Path | None, str | None]:
@@ -906,14 +1063,14 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
 
     if job.audio_only:
         output_suffix = f".{job.audio_format}"
-        output_path = job_dir / f"sanitized_output{output_suffix}"
+        output_path = build_non_conflicting_output_path(job_dir, f"sanitized_output{output_suffix}", job.input_path)
         sanitize_audio(job.input_path, sanitized_intervals, job.censor_type, output_path, job.audio_format)
         return output_path, mimetypes.guess_type(output_path.name)[0] or "audio/mpeg", None, None
 
     if source_is_video:
         output_suffix = f".{job.requested_format}"
-        audio_track_path = job_dir / "sanitized_audio.wav"
-        output_path = job_dir / f"sanitized_output{output_suffix}"
+        audio_track_path = build_non_conflicting_output_path(job_dir, "sanitized_audio.wav", job.input_path)
+        output_path = build_non_conflicting_output_path(job_dir, f"sanitized_output{output_suffix}", job.input_path)
         sanitize_audio(job.input_path, sanitized_intervals, job.censor_type, audio_track_path, "wav")
         mux_video_with_audio(job.input_path, audio_track_path, output_path)
 
@@ -923,7 +1080,7 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
             preview_path = output_path
             preview_mime_type = mimetypes.guess_type(output_path.name)[0] or "video/mp4"
         else:
-            preview_path = job_dir / "sanitized_preview.mp4"
+            preview_path = build_non_conflicting_output_path(job_dir, "sanitized_preview.mp4", job.input_path)
             mux_video_with_audio(job.input_path, audio_track_path, preview_path)
             preview_mime_type = "video/mp4"
 
@@ -939,7 +1096,7 @@ def build_output_file(job: JobState, classified_words: list[dict[str, Any]]) -> 
         output_suffix = ".mp3"
 
     output_format = output_suffix.lstrip(".")
-    output_path = job_dir / f"sanitized_output{output_suffix}"
+    output_path = build_non_conflicting_output_path(job_dir, f"sanitized_output{output_suffix}", job.input_path)
     sanitize_audio(job.input_path, sanitized_intervals, job.censor_type, output_path, output_format)
     return output_path, mimetypes.guess_type(output_path.name)[0] or "audio/mpeg", None, None
 

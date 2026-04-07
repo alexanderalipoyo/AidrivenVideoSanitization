@@ -301,6 +301,29 @@ Example:
 https://www.youtube.com/watch?v=...
 ```
 
+### YouTube says "Sign in to confirm you're not a bot"
+
+Some YouTube requests require authenticated cookies. Configure one of these before starting the backend:
+
+- `YTDLP_COOKIES_FILE` pointing to an exported `cookies.txt` file
+- `YTDLP_COOKIES_BROWSER` with a browser name such as `chrome`, `edge`, `firefox`, or `brave`
+- Optional: `YTDLP_COOKIES_PROFILE` for non-default browser profiles
+
+Windows PowerShell example:
+
+```powershell
+$env:YTDLP_COOKIES_BROWSER = "chrome"
+$env:YTDLP_COOKIES_PROFILE = "Default"
+npm run api
+```
+
+Or with an exported cookies file:
+
+```powershell
+$env:YTDLP_COOKIES_FILE = "C:\path\to\cookies.txt"
+npm run api
+```
+
 ### First run is slow
 
 Whisper model loading can take time the first time the backend starts processing.
