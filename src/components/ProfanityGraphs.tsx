@@ -222,9 +222,7 @@ export function ProfanityGraphs({ file, showHeader = true }: ProfanityGraphsProp
               endAngle={-270}
             >
               <RadialBar
-                minAngle={15}
                 background={{ fill: '#1e293b' }}
-                clockWise
                 dataKey="value"
                 cornerRadius={10}
               />
