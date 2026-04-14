@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, Pause, Play, Square, Trash2, Upload } from "lucide-react";
+import { Mic, MicOff, Pause, Play, Square, Upload, X } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -14,6 +14,8 @@ const NEVER_ALLOW_KEY = "voice-record-mic-choice";
 type PermissionChoice = "undecided" | "allow-session" | "never";
 
 export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps) {
+  const MIN_TRIM_GAP_SECONDS = 0.1;
+
   const [permissionChoice, setPermissionChoice] = useState<PermissionChoice>(() => {
     if (typeof window === "undefined") {
       return "undecided";
@@ -27,6 +29,13 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
   const [recordedFile, setRecordedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewDurationSec, setPreviewDurationSec] = useState(0);
+  const [trimStartSec, setTrimStartSec] = useState(0);
+  const [trimEndSec, setTrimEndSec] = useState(0);
+  const [playheadSec, setPlayheadSec] = useState(0);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [previewSamples, setPreviewSamples] = useState<number[]>([]);
+  const [isSavingPreview, setIsSavingPreview] = useState(false);
 
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -37,6 +46,10 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
   const animationFrameRef = useRef<number | null>(null);
   const waveformHistoryRef = useRef<number[]>([]);
   const timerIntervalRef = useRef<number | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewTimelineRef = useRef<HTMLDivElement | null>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const previewDragRef = useRef<"start" | "end" | null>(null);
   const accumulatedDurationMsRef = useRef(0);
   const activeSegmentStartMsRef = useRef<number | null>(null);
 
@@ -71,6 +84,104 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
       window.cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+  };
+
+  const clampTime = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+  const formatPreviewTime = (seconds: number) => {
+    const safeSeconds = Math.max(0, seconds);
+    const minutes = Math.floor(safeSeconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const secs = (safeSeconds % 60).toFixed(1).padStart(4, "0");
+    return `${minutes}:${secs}`;
+  };
+
+  const timeToPercent = (timeSec: number) => {
+    if (previewDurationSec <= 0) {
+      return 0;
+    }
+    return (timeSec / previewDurationSec) * 100;
+  };
+
+  const buildPreviewSamples = async (file: File) => {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) {
+      return;
+    }
+
+    try {
+      const ctx = new AudioCtx();
+      const arrayBuffer = await file.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+
+      const channelData = decoded.numberOfChannels > 0
+        ? decoded.getChannelData(0)
+        : new Float32Array(0);
+
+      const bucketCount = 320;
+      const blockSize = Math.max(1, Math.floor(channelData.length / bucketCount));
+      const samples = new Array(bucketCount).fill(0).map((_, i) => {
+        const start = i * blockSize;
+        const end = Math.min(channelData.length, start + blockSize);
+        let sumSquares = 0;
+
+        for (let s = start; s < end; s += 1) {
+          const v = channelData[s];
+          sumSquares += v * v;
+        }
+
+        const rms = Math.sqrt(sumSquares / Math.max(1, end - start));
+        return clampTime(rms * 2.8, 0.02, 1);
+      });
+
+      setPreviewSamples(samples);
+      void ctx.close();
+    } catch {
+      setPreviewSamples([]);
+    }
+  };
+
+  const encodeWav = (audioBuffer: AudioBuffer) => {
+    const numberOfChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const numSamples = audioBuffer.length;
+    const bytesPerSample = 2;
+    const blockAlign = numberOfChannels * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + numSamples * blockAlign);
+    const view = new DataView(buffer);
+
+    const writeString = (offset: number, value: string) => {
+      for (let i = 0; i < value.length; i += 1) {
+        view.setUint8(offset + i, value.charCodeAt(i));
+      }
+    };
+
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + numSamples * blockAlign, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numberOfChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, numSamples * blockAlign, true);
+
+    let offset = 44;
+    for (let i = 0; i < numSamples; i += 1) {
+      for (let ch = 0; ch < numberOfChannels; ch += 1) {
+        const sample = clampTime(audioBuffer.getChannelData(ch)[i], -1, 1);
+        const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        view.setInt16(offset, int16, true);
+        offset += 2;
+      }
+    }
+
+    return new Blob([buffer], { type: "audio/wav" });
   };
 
   const clearRecordingTimer = () => {
@@ -256,6 +367,108 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    const audio = previewAudioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const handleLoadedMetadata = () => {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      setPreviewDurationSec(duration);
+      setTrimStartSec(0);
+      setTrimEndSec(duration);
+      setPlayheadSec(duration > 0 ? duration / 2 : 0);
+    };
+
+    const handleTimeUpdate = () => {
+      if (audio.currentTime >= trimEndSec) {
+        audio.pause();
+        setIsPreviewPlaying(false);
+        audio.currentTime = trimEndSec;
+      }
+      setPlayheadSec(audio.currentTime);
+    };
+
+    const handleEnded = () => {
+      setIsPreviewPlaying(false);
+    };
+
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("ended", handleEnded);
+    };
+  }, [previewUrl, trimEndSec]);
+
+  useEffect(() => {
+    if (!recordedFile) {
+      return;
+    }
+    void buildPreviewSamples(recordedFile);
+  }, [recordedFile]);
+
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (!canvas || previewDurationSec <= 0) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+
+    const nextWidth = Math.floor(width * dpr);
+    const nextHeight = Math.floor(height * dpr);
+    if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    context.clearRect(0, 0, width, height);
+
+    const baseGradient = context.createLinearGradient(0, 0, 0, height);
+    baseGradient.addColorStop(0, "rgba(34, 65, 133, 0.7)");
+    baseGradient.addColorStop(1, "rgba(22, 45, 102, 0.95)");
+    context.fillStyle = baseGradient;
+    context.fillRect(0, 0, width, height);
+
+    const centerY = height / 2;
+    context.strokeStyle = "rgba(45, 212, 191, 0.8)";
+    context.lineWidth = 1.4;
+    context.beginPath();
+    context.moveTo(0, centerY);
+    context.lineTo(width, centerY);
+    context.stroke();
+
+    const values = previewSamples.length > 0 ? previewSamples : new Array(220).fill(0.03);
+    const step = width / Math.max(1, values.length - 1);
+    const maxHeight = height * 0.4;
+
+    context.fillStyle = "rgba(16, 185, 129, 0.9)";
+    for (let i = 0; i < values.length; i += 1) {
+      const x = i * step;
+      const half = values[i] * maxHeight;
+      context.fillRect(x, centerY - half, 1.5, half * 2);
+    }
+
+    const trimStartX = (trimStartSec / previewDurationSec) * width;
+    const trimEndX = (trimEndSec / previewDurationSec) * width;
+    context.fillStyle = "rgba(8, 16, 45, 0.55)";
+    context.fillRect(0, 0, trimStartX, height);
+    context.fillRect(trimEndX, 0, width - trimEndX, height);
+  }, [previewSamples, previewDurationSec, trimStartSec, trimEndSec]);
 
   const startRecording = async () => {
     if (permissionChoice === "never") {
@@ -452,27 +665,173 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
   };
 
   const clearRecording = () => {
+    const audio = previewAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
     }
+    setPreviewDurationSec(0);
+    setTrimStartSec(0);
+    setTrimEndSec(0);
+    setPlayheadSec(0);
+    setIsPreviewPlaying(false);
+    setPreviewSamples([]);
     setPreviewUrl(null);
     setRecordedFile(null);
   };
 
-  const addRecordingToQueue = () => {
+  const movePlayheadFromClientX = (clientX: number) => {
+    if (!previewTimelineRef.current || previewDurationSec <= 0) {
+      return;
+    }
+
+    const rect = previewTimelineRef.current.getBoundingClientRect();
+    const ratio = clampTime((clientX - rect.left) / rect.width, 0, 1);
+    const nextTime = ratio * previewDurationSec;
+    const clamped = clampTime(nextTime, trimStartSec, trimEndSec);
+    setPlayheadSec(clamped);
+
+    const audio = previewAudioRef.current;
+    if (audio) {
+      audio.currentTime = clamped;
+    }
+  };
+
+  const startDraggingHandle = (event: React.PointerEvent<HTMLDivElement>, handle: "start" | "end") => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    previewDragRef.current = handle;
+  };
+
+  const stopDraggingHandle = () => {
+    previewDragRef.current = null;
+  };
+
+  useEffect(() => {
+    const handleMove = (event: PointerEvent) => {
+      const dragging = previewDragRef.current;
+      if (!dragging || !previewTimelineRef.current || previewDurationSec <= 0) {
+        return;
+      }
+
+      const rect = previewTimelineRef.current.getBoundingClientRect();
+      const ratio = clampTime((event.clientX - rect.left) / rect.width, 0, 1);
+      const nextTime = ratio * previewDurationSec;
+
+      if (dragging === "start") {
+        const nextStart = clampTime(nextTime, 0, Math.max(0, trimEndSec - MIN_TRIM_GAP_SECONDS));
+        setTrimStartSec(nextStart);
+        if (playheadSec < nextStart) {
+          setPlayheadSec(nextStart);
+        }
+      } else {
+        const nextEnd = clampTime(nextTime, trimStartSec + MIN_TRIM_GAP_SECONDS, previewDurationSec);
+        setTrimEndSec(nextEnd);
+        if (playheadSec > nextEnd) {
+          setPlayheadSec(nextEnd);
+        }
+      }
+    };
+
+    const handleUp = () => {
+      stopDraggingHandle();
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [previewDurationSec, trimStartSec, trimEndSec, playheadSec]);
+
+  const togglePreviewPlayback = async () => {
+    const audio = previewAudioRef.current;
+    if (!audio || previewDurationSec <= 0) {
+      return;
+    }
+
+    if (isPreviewPlaying) {
+      audio.pause();
+      setIsPreviewPlaying(false);
+      return;
+    }
+
+    const startAt = clampTime(playheadSec, trimStartSec, trimEndSec);
+    audio.currentTime = startAt;
+
+    try {
+      await audio.play();
+      setIsPreviewPlaying(true);
+    } catch {
+      toast.error("Unable to play recording preview.");
+    }
+  };
+
+  const addRecordingToQueue = async () => {
     if (!recordedFile) {
       return;
     }
-    onRecordingReady(recordedFile);
-    toast.success("Recording added to queue");
+
+    const fullSelection = previewDurationSec <= 0
+      || (trimStartSec <= 0.01 && trimEndSec >= previewDurationSec - 0.01);
+
+    if (fullSelection) {
+      onRecordingReady(recordedFile);
+      toast.success("Recording saved to queue");
+      return;
+    }
+
+    setIsSavingPreview(true);
+
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) {
+        throw new Error("Audio editing is unavailable in this browser.");
+      }
+
+      const ctx = new AudioCtx();
+      const sourceBuffer = await ctx.decodeAudioData((await recordedFile.arrayBuffer()).slice(0));
+
+      const sampleRate = sourceBuffer.sampleRate;
+      const startSample = Math.floor(trimStartSec * sampleRate);
+      const endSample = Math.floor(trimEndSec * sampleRate);
+      const length = Math.max(1, endSample - startSample);
+      const channels = sourceBuffer.numberOfChannels;
+      const trimmed = ctx.createBuffer(channels, length, sampleRate);
+
+      for (let ch = 0; ch < channels; ch += 1) {
+        const source = sourceBuffer.getChannelData(ch).subarray(startSample, endSample);
+        trimmed.copyToChannel(source, ch, 0);
+      }
+
+      const wavBlob = encodeWav(trimmed);
+      const trimmedFile = new File([wavBlob], `voice-recording-${Date.now()}-trimmed.wav`, {
+        type: "audio/wav",
+      });
+
+      onRecordingReady(trimmedFile);
+      toast.success("Trimmed recording saved to queue");
+      void ctx.close();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save trimmed recording.");
+    } finally {
+      setIsSavingPreview(false);
+    }
   };
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
-      <Card className="space-y-5 border-slate-800 bg-slate-900/70 p-6 lg:col-span-2">
-        <div className="space-y-1">
+      <Card className={`${previewUrl ? "space-y-1" : "space-y-5"} border-slate-800 bg-slate-900/70 p-6 lg:col-span-2`}>
+        <div className={`${previewUrl ? "space-y-0" : "space-y-1"}`}>
           <h3 className="text-slate-100">Voice record</h3>
-          <p className="text-sm text-slate-400">
+          <p className={`text-sm text-slate-400 ${previewUrl ? "mb-0 hidden" : ""}`}>
             Record straight from your microphone and send the clip to the sanitizer queue.
           </p>
         </div>
@@ -517,7 +876,7 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
               </Alert>
             ) : permissionChoice === "allow-session" ? (
               <div className="space-y-3">
-                {!isRecording ? (
+                {!isRecording && !previewUrl ? (
                   <div className="flex items-center justify-center">
                     <Button
                       type="button"
@@ -529,7 +888,7 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
                       <Mic className="h-6 w-6" />
                     </Button>
                   </div>
-                ) : (
+                ) : isRecording ? (
                   <>
                     <div className="flex items-center justify-center gap-2 text-sm text-slate-200">
                       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-100">
@@ -580,22 +939,93 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
                       </Button>
                     </div>
                   </>
-                )}
+                ) : null}
               </div>
             ) : null}
 
             {previewUrl && (
-              <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/50 p-4">
-                <p className="text-sm text-slate-300">Recording preview</p>
-                <audio controls src={previewUrl} className="w-full" />
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={addRecordingToQueue} className="bg-emerald-600 hover:bg-emerald-500">
-                    <Upload className="mr-2 h-4 w-4" />
-                    Add to queue
+              <div className="w-full -mt-1 space-y-3 rounded-xl border border-slate-700/70 bg-gradient-to-b from-[#25357d] to-[#1e2d6c] p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-cyan-100">Recording preview</p>
+                  <button
+                    type="button"
+                    onClick={clearRecording}
+                    className="rounded-full p-1.5 text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                    aria-label="Close preview"
+                    title="Close preview"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <audio ref={previewAudioRef} src={previewUrl} preload="metadata" className="hidden" />
+
+                <div className="space-y-2">
+                  <div
+                    ref={previewTimelineRef}
+                    className="relative h-48 overflow-hidden rounded-lg border border-cyan-500/30 bg-[#203b79]"
+                    onClick={(event) => movePlayheadFromClientX(event.clientX)}
+                  >
+                    <canvas ref={previewCanvasRef} className="absolute inset-0 h-full w-full" />
+
+                    {previewDurationSec > 0 && (
+                      <>
+                        <div
+                          className="absolute top-0 z-20 h-full w-3 -translate-x-1/2 cursor-ew-resize touch-none"
+                          style={{ left: `${timeToPercent(trimStartSec)}%` }}
+                          onPointerDown={(event) => startDraggingHandle(event, "start")}
+                        >
+                          <div className="mx-auto h-full w-[3px] bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
+                        </div>
+                        <div
+                          className="absolute top-0 z-20 h-full w-3 -translate-x-1/2 cursor-ew-resize touch-none"
+                          style={{ left: `${timeToPercent(trimEndSec)}%` }}
+                          onPointerDown={(event) => startDraggingHandle(event, "end")}
+                        >
+                          <div className="mx-auto h-full w-[3px] bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
+                        </div>
+
+                        <div
+                          className="pointer-events-none absolute top-0 h-full w-px bg-white/95"
+                          style={{ left: `${timeToPercent(playheadSec)}%` }}
+                        />
+
+                        <div
+                          className="pointer-events-none absolute top-2 z-10 -translate-x-1/2 rounded bg-slate-900/85 px-2 py-0.5 text-xs text-cyan-100"
+                          style={{ left: `${timeToPercent(playheadSec)}%` }}
+                        >
+                          {formatPreviewTime(playheadSec)}
+                        </div>
+
+                        <div className="pointer-events-none absolute bottom-1 left-2 text-xs text-cyan-300">
+                          {formatPreviewTime(trimStartSec)}
+                        </div>
+                        <div className="pointer-events-none absolute bottom-1 right-2 text-xs text-cyan-300">
+                          {formatPreviewTime(trimEndSec)}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <Button
+                    type="button"
+                    onClick={togglePreviewPlayback}
+                    className="min-w-24 rounded-full bg-slate-900/65 text-white hover:bg-slate-900"
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    {isPreviewPlaying ? "Pause" : "Play"}
                   </Button>
-                  <Button type="button" variant="outline" onClick={clearRecording}>
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Discard
+
+                  <Button
+                    type="button"
+                    onClick={addRecordingToQueue}
+                    disabled={isSavingPreview}
+                    className="min-w-28 rounded-full bg-emerald-100 text-slate-900 hover:bg-emerald-200"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    {isSavingPreview ? "Saving..." : "Save"}
                   </Button>
                 </div>
               </div>
