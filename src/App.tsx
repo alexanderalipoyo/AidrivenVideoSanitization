@@ -15,10 +15,12 @@ import {
   AudioWaveform,
   Link,
   Languages,
+  Mic,
   Settings,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
+import { VoiceRecorderPanel } from "./components/VoiceRecorderPanel";
 import { toast } from "sonner";
 import JSZip from "jszip";
 import { deleteJob, fetchDictionaryDefinition, fetchJobStatus, resolveApiAssetUrl, startProcessingJob, startProcessingUrlJob } from "./lib/api";
@@ -93,7 +95,7 @@ function shouldForceVideoDownload(mediaUrl: string) {
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"upload-media" | "upload-url">("upload-media");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"upload-media" | "upload-url" | "voice-record">("upload-media");
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
@@ -169,6 +171,10 @@ export default function App() {
     } catch (error) {
       throw error instanceof Error ? error : new Error("URL processing failed");
     }
+  };
+
+  const handleVoiceRecordingAdded = (recordedFile: File) => {
+    handleFilesAdded([recordedFile]);
   };
 
   const updateFile = (id: string, changes: Partial<AudioFile>) => {
@@ -670,7 +676,7 @@ export default function App() {
           <div className="space-y-6">
             <Tabs
               value={activeWorkspaceTab}
-              onValueChange={(value: string) => setActiveWorkspaceTab(value as "upload-media" | "upload-url")}
+              onValueChange={(value: string) => setActiveWorkspaceTab(value as "upload-media" | "upload-url" | "voice-record")}
               className="space-y-6"
             >
               <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
@@ -687,6 +693,13 @@ export default function App() {
                 >
                   <Link className="mr-2 w-4 h-4" />
                   Upload via Url
+                </TabsTrigger>
+                <TabsTrigger
+                  value="voice-record"
+                  className="text-slate-300 hover:text-slate-100 data-[state=active]:bg-violet-600 data-[state=active]:text-white"
+                >
+                  <Mic className="mr-2 w-4 h-4" />
+                  Voice record
                 </TabsTrigger>
               </TabsList>
 
@@ -714,6 +727,10 @@ export default function App() {
                   onSettingsChange={setSettings}
                   onUrlAdded={handleUrlAdded}
                 />
+              </TabsContent>
+
+              <TabsContent value="voice-record">
+                <VoiceRecorderPanel onRecordingReady={handleVoiceRecordingAdded} />
               </TabsContent>
             </Tabs>
 
