@@ -12,6 +12,8 @@ interface FormatSelectorProps {
   settings: ConversionSettings;
   onSettingsChange: (settings: ConversionSettings) => void;
   showAudioOnly?: boolean;
+  hideVideoFormat?: boolean;
+  forceAudioFormat?: boolean;
 }
 
 const formats = [
@@ -38,7 +40,13 @@ const sensorTypes = [
   { value: 'bruh', label: 'Bruh', description: 'Use backend_data/censor_sounds/bruh.mp3' },
 ];
 
-export function FormatSelector({ settings, onSettingsChange, showAudioOnly = false }: FormatSelectorProps) {
+export function FormatSelector({
+  settings,
+  onSettingsChange,
+  showAudioOnly = false,
+  hideVideoFormat = false,
+  forceAudioFormat = false,
+}: FormatSelectorProps) {
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const selectedFormat = formats.find((format) => format.value === settings.format);
@@ -96,7 +104,7 @@ export function FormatSelector({ settings, onSettingsChange, showAudioOnly = fal
         <h3 className="text-slate-100">Output Settings</h3>
 
         <div className="space-y-4">
-          {showAudioOnly && (
+          {showAudioOnly && !forceAudioFormat && (
             <div
               className={`flex items-center justify-between rounded-lg border p-3 transition-all ${
                 settings.audioOnly
@@ -119,39 +127,41 @@ export function FormatSelector({ settings, onSettingsChange, showAudioOnly = fal
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label className="text-slate-300">Video Format</Label>
-            <Select
-              value={settings.format}
-              disabled={settings.audioOnly}
-              onValueChange={(value) => onSettingsChange({ ...settings, format: value })}
-            >
-              <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200 disabled:opacity-50">
-                <SelectValue placeholder="Select format">
-                  {selectedFormat?.label}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent className="bg-slate-900 border-slate-700">
-                {formats.map((format) => (
-                  <SelectItem 
-                    key={format.value} 
-                    value={format.value}
-                    className="text-slate-200 focus:bg-slate-800"
-                  >
-                    <div>
-                      <div>{format.label}</div>
-                      <div className="text-xs text-slate-500">{format.description}</div>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {settings.audioOnly && (
-              <p className="text-xs text-slate-500">Video format is ignored while Audio Only is enabled.</p>
-            )}
-          </div>
+          {!hideVideoFormat && (
+            <div className="space-y-2">
+              <Label className="text-slate-300">Video Format</Label>
+              <Select
+                value={settings.format}
+                disabled={settings.audioOnly}
+                onValueChange={(value) => onSettingsChange({ ...settings, format: value })}
+              >
+                <SelectTrigger className="bg-slate-950 border-slate-700 text-slate-200 disabled:opacity-50">
+                  <SelectValue placeholder="Select format">
+                    {selectedFormat?.label}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="bg-slate-900 border-slate-700">
+                  {formats.map((format) => (
+                    <SelectItem 
+                      key={format.value} 
+                      value={format.value}
+                      className="text-slate-200 focus:bg-slate-800"
+                    >
+                      <div>
+                        <div>{format.label}</div>
+                        <div className="text-xs text-slate-500">{format.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {settings.audioOnly && (
+                <p className="text-xs text-slate-500">Video format is ignored while Audio Only is enabled.</p>
+              )}
+            </div>
+          )}
 
-          {settings.audioOnly && (
+          {(settings.audioOnly || forceAudioFormat) && (
             <div className="space-y-2">
               <Label className="text-slate-300">Audio Format</Label>
               <Select

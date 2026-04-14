@@ -394,7 +394,7 @@ export function ProcessingQueue({
                             variant="outline"
                             onClick={() => onDownloadFile(file.id)}
                             className="border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400/50 hover:bg-emerald-500/20 hover:text-emerald-100"
-                            title="Download video"
+                            title="download media"
                           >
                             <Download className="w-4 h-4" />
                           </Button>

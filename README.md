@@ -42,6 +42,7 @@ Backend API: `http://127.0.0.1:8000`
 - Generate a word safety report and profanity analytics
 - Preview both original and sanitized media in the app
 - Export sanitized video or audio-only output
+- Record audio directly from microphone in the `Voice record` tab
 - Choose built-in censor behaviors such as `beep`, `silence`, or `faaa`
 - Browse supported profanity dictionaries from the UI with lazy-loaded language modals
 - Hover profanity entries in supported language tables to view dictionary meanings or translations
@@ -133,6 +134,7 @@ Key Python packages used by this project include:
 - `uvicorn`
 - `python-multipart`
 - `yt-dlp`
+- `@ffmpeg/ffmpeg`, `@ffmpeg/core`, `@ffmpeg/util` (browser-side voice recording transcoding)
 
 ## Running locally
 
@@ -177,6 +179,18 @@ Typical supported sources include:
 - Bandcamp
 - Other sites supported by `yt-dlp`
 
+### Voice recording workflow
+
+Use the `Voice record` tab to capture audio directly from your microphone.
+
+The recorder supports:
+
+- Browser microphone permission flow
+- Live waveform while recording
+- Pause/resume and stop controls
+- Post-recording preview with draggable trim handles
+- Save to queue with client-side transcoding to the selected audio format
+
 ### Browse supported languages
 
 Open any language card from the `Supported Languages` page to load its profanity CSV in a modal.
@@ -219,6 +233,12 @@ The UI currently supports:
 - Censor type
 - Audio-only export toggle
 - Audio format selection when audio-only is enabled
+
+In the `Voice record` tab, output settings are audio-focused:
+
+- Video format is hidden
+- Audio format is always selectable
+- Saved queue file extension and MIME now match the selected audio format via client-side transcoding
 
 For some URL sources such as YouTube and TikTok, the app keeps video downloads enabled so previews remain available.
 
@@ -304,6 +324,14 @@ Example:
 ```text
 https://www.youtube.com/watch?v=...
 ```
+
+### Voice record save fails with FFmpeg load/fetch errors
+
+Try these checks:
+
+- Ensure frontend dependencies are installed: `npm install`
+- Restart the Vite dev server after dependency or config changes
+- If dependency optimizer cache is stale, delete `node_modules/.vite` and run `npm run dev` again
 
 ### YouTube says "Sign in to confirm you're not a bot"
 

@@ -158,6 +158,12 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
   const report = file.safetyReport ?? [];
   const profaneRows = report.filter((item) => item.is_profane);
   const generatedAt = formatDateTime(Date.now());
+  const isVoiceRecording = (file.name || '').toLowerCase().startsWith('voice-recording-');
+  const sourceTypeLabel = isVoiceRecording
+    ? 'Voice recording'
+    : file.url
+      ? 'URL import'
+      : 'Local upload';
 
   drawPageHeader(doc, generatedAt);
 
@@ -191,7 +197,7 @@ export function downloadProcessingReportPdf({ file, meanings }: ReportOptions) {
     head: [['Field', 'Value']],
     body: [
       ['Source Name', file.name || 'Unknown'],
-      ['Source Type', file.url ? 'URL import' : 'Local upload'],
+      ['Source Type', sourceTypeLabel],
       ['Source URL', file.url || 'N/A'],
       ['Input MIME Type', file.type || 'Unknown'],
       ['Input Size', formatBytes(file.size)],
