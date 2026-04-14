@@ -35,6 +35,7 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const waveformHistoryRef = useRef<number[]>([]);
   const timerIntervalRef = useRef<number | null>(null);
   const accumulatedDurationMsRef = useRef(0);
   const activeSegmentStartMsRef = useRef<number | null>(null);
@@ -114,17 +115,11 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    const frequencyBins = analyser.frequencyBinCount;
-    const frequencyData = new Uint8Array(frequencyBins);
-    analyser.getByteFrequencyData(frequencyData);
-
     const timeDomainData = new Uint8Array(analyser.fftSize);
     analyser.getByteTimeDomainData(timeDomainData);
 
     const centerY = height / 2;
-    const barGap = 1.5;
-    const barWidth = 3;
-    const barCount = Math.max(40, Math.floor(width / (barWidth + barGap)));
+    const pointCount = Math.max(140, Math.floor(width / 3));
 
     context.clearRect(0, 0, width, height);
 
@@ -142,52 +137,69 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
     context.lineTo(width, centerY);
     context.stroke();
 
-    const barGradient = context.createLinearGradient(0, 0, 0, height);
-    barGradient.addColorStop(0, "#67e8f9");
-    barGradient.addColorStop(0.5, "#22d3ee");
-    barGradient.addColorStop(1, "#0e7490");
-
-    context.shadowColor = "rgba(34, 211, 238, 0.55)";
-    context.shadowBlur = 10;
-    context.fillStyle = barGradient;
-
-    for (let i = 0; i < barCount; i += 1) {
-      const binStart = Math.floor((i / barCount) * frequencyBins);
-      const binEnd = Math.floor(((i + 1) / barCount) * frequencyBins);
-      let sum = 0;
-
-      for (let j = binStart; j < binEnd; j += 1) {
-        sum += frequencyData[j];
-      }
-
-      const avg = sum / Math.max(1, binEnd - binStart);
-      const normalized = avg / 255;
-      const minHalfHeight = 3;
-      const maxHalfHeight = (height * 0.42);
-      const halfHeight = minHalfHeight + normalized * (maxHalfHeight - minHalfHeight);
-      const x = i * (barWidth + barGap);
-
-      context.fillRect(x, centerY - halfHeight, barWidth, halfHeight);
-      context.fillRect(x, centerY, barWidth, halfHeight);
+    if (waveformHistoryRef.current.length !== pointCount) {
+      waveformHistoryRef.current = new Array(pointCount).fill(0);
     }
+
+    // Compute current signal energy and append to history for left-scrolling progress.
+    let sumSquares = 0;
+    for (let i = 0; i < timeDomainData.length; i += 1) {
+      const centered = (timeDomainData[i] - 128) / 128;
+      sumSquares += centered * centered;
+    }
+    const rms = Math.sqrt(sumSquares / timeDomainData.length);
+    const amplitude = Math.min(1, rms * 3.4);
+
+    const history = waveformHistoryRef.current;
+    history.push(amplitude);
+    if (history.length > pointCount) {
+      history.shift();
+    }
+
+    const xStep = width / (pointCount - 1);
+    const maxWaveHeight = height * 0.36;
+
+    const fillGradient = context.createLinearGradient(0, 0, 0, height);
+    fillGradient.addColorStop(0, "rgba(16, 185, 129, 0.85)");
+    fillGradient.addColorStop(0.5, "rgba(45, 212, 191, 0.78)");
+    fillGradient.addColorStop(1, "rgba(16, 185, 129, 0.85)");
+
+    context.shadowColor = "rgba(45, 212, 191, 0.5)";
+    context.shadowBlur = 10;
+    context.fillStyle = fillGradient;
+    context.beginPath();
+    context.moveTo(0, centerY);
+
+    for (let i = 0; i < history.length; i += 1) {
+      const smoothed = i > 0 ? (history[i - 1] + history[i]) / 2 : history[i];
+      const y = centerY - (smoothed * maxWaveHeight);
+      context.lineTo(i * xStep, y);
+    }
+
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const smoothed = i < history.length - 1 ? (history[i + 1] + history[i]) / 2 : history[i];
+      const y = centerY + (smoothed * maxWaveHeight);
+      context.lineTo(i * xStep, y);
+    }
+
+    context.closePath();
+    context.fill();
 
     context.shadowBlur = 0;
 
-    // Overlay a flowing time-domain wave so motion comes from the waveform, not a moving marker.
     const waveGradient = context.createLinearGradient(0, 0, width, 0);
-    waveGradient.addColorStop(0, "rgba(186, 230, 253, 0.22)");
-    waveGradient.addColorStop(0.5, "rgba(125, 211, 252, 0.7)");
-    waveGradient.addColorStop(1, "rgba(186, 230, 253, 0.22)");
+    waveGradient.addColorStop(0, "rgba(94, 234, 212, 0.25)");
+    waveGradient.addColorStop(0.5, "rgba(45, 212, 191, 0.95)");
+    waveGradient.addColorStop(1, "rgba(94, 234, 212, 0.25)");
     context.strokeStyle = waveGradient;
-    context.lineWidth = 2.4;
+    context.lineWidth = 1.6;
     context.beginPath();
 
-    const pointCount = Math.min(timeDomainData.length, Math.max(120, Math.floor(width)));
     for (let i = 0; i < pointCount; i += 1) {
       const sampleIndex = Math.floor((i / pointCount) * timeDomainData.length);
       const normalized = (timeDomainData[sampleIndex] - 128) / 128;
-      const x = (i / (pointCount - 1)) * width;
-      const y = centerY + normalized * (height * 0.28);
+      const x = i * xStep;
+      const y = centerY + normalized * (height * 0.2);
 
       if (i === 0) {
         context.moveTo(x, y);
@@ -202,6 +214,7 @@ export function VoiceRecorderPanel({ onRecordingReady }: VoiceRecorderPanelProps
 
   const startWaveformLoop = () => {
     clearWaveformLoop();
+    waveformHistoryRef.current = [];
     animationFrameRef.current = window.requestAnimationFrame(drawWaveform);
   };
 
