@@ -30,6 +30,8 @@ import { toast } from "sonner";
 interface VoiceRecorderPanelProps {
   onRecordingReady: (file: File) => void;
   audioFormat?: string;
+  pauseSignal?: number;
+  onRecordingStateChange?: (state: { isRecording: boolean; isPaused: boolean }) => void;
 }
 
 const NEVER_ALLOW_KEY = "voice-record-mic-choice";
@@ -41,7 +43,12 @@ type AudioInputOption = {
   label: string;
 };
 
-export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: VoiceRecorderPanelProps) {
+export function VoiceRecorderPanel({
+  onRecordingReady,
+  audioFormat = "mp3",
+  pauseSignal,
+  onRecordingStateChange,
+}: VoiceRecorderPanelProps) {
   const MIN_TRIM_GAP_SECONDS = 0.1;
 
   const [permissionChoice, setPermissionChoice] = useState<PermissionChoice>(() => {
@@ -86,6 +93,7 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
   const ffmpegLoadPromiseRef = useRef<Promise<void> | null>(null);
   const accumulatedDurationMsRef = useRef(0);
   const activeSegmentStartMsRef = useRef<number | null>(null);
+  const lastPauseSignalRef = useRef<number | undefined>(pauseSignal);
 
   const recordingMimeType = useMemo(() => {
     if (typeof window === "undefined" || typeof MediaRecorder === "undefined") {
@@ -567,6 +575,10 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
   }, [previewUrl]);
 
   useEffect(() => {
+    onRecordingStateChange?.({ isRecording, isPaused });
+  }, [isRecording, isPaused, onRecordingStateChange]);
+
+  useEffect(() => {
     const audio = previewAudioRef.current;
     if (!audio) {
       return;
@@ -838,6 +850,25 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
     mediaRecorderRef.current.stop();
   };
 
+  const pauseRecordingIfActive = () => {
+    const recorder = mediaRecorderRef.current;
+
+    if (!recorder || recorder.state !== "recording") {
+      return;
+    }
+
+    recorder.pause();
+
+    if (activeSegmentStartMsRef.current) {
+      accumulatedDurationMsRef.current += Date.now() - activeSegmentStartMsRef.current;
+      activeSegmentStartMsRef.current = null;
+    }
+
+    setRecordingElapsedMs(accumulatedDurationMsRef.current);
+    setIsPaused(true);
+    clearWaveformLoop();
+  };
+
   const togglePauseRecording = () => {
     const recorder = mediaRecorderRef.current;
 
@@ -846,16 +877,7 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
     }
 
     if (recorder.state === "recording") {
-      recorder.pause();
-
-      if (activeSegmentStartMsRef.current) {
-        accumulatedDurationMsRef.current += Date.now() - activeSegmentStartMsRef.current;
-        activeSegmentStartMsRef.current = null;
-      }
-
-      setRecordingElapsedMs(accumulatedDurationMsRef.current);
-      setIsPaused(true);
-      clearWaveformLoop();
+      pauseRecordingIfActive();
       return;
     }
 
@@ -866,6 +888,22 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
       startWaveformLoop(false);
     }
   };
+
+  useEffect(() => {
+    if (pauseSignal === undefined) {
+      return;
+    }
+
+    if (lastPauseSignalRef.current === pauseSignal) {
+      return;
+    }
+
+    lastPauseSignalRef.current = pauseSignal;
+
+    if (isRecording && !isPaused) {
+      pauseRecordingIfActive();
+    }
+  }, [isPaused, isRecording, pauseSignal]);
 
   const setNeverAllow = () => {
     localStorage.setItem(NEVER_ALLOW_KEY, "never");

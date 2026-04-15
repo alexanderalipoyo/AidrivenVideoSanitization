@@ -19,6 +19,16 @@ import {
   Settings,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog";
 import { SupportedLanguagesPage } from "./components/SupportedLanguagesPage";
 import { VoiceRecorderPanel } from "./components/VoiceRecorderPanel";
 import { toast } from "sonner";
@@ -81,6 +91,8 @@ export interface ConversionSettings {
   preset?: string;
 }
 
+type WorkspaceTab = "upload-media" | "upload-url" | "voice-record";
+
 function shouldForceVideoDownload(mediaUrl: string) {
   try {
     const hostname = new URL(mediaUrl).hostname.toLowerCase();
@@ -95,7 +107,11 @@ function shouldForceVideoDownload(mediaUrl: string) {
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<"upload-media" | "upload-url" | "voice-record">("upload-media");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("upload-media");
+  const [voiceRecorderStatus, setVoiceRecorderStatus] = useState({ isRecording: false, isPaused: false });
+  const [pauseRecorderSignal, setPauseRecorderSignal] = useState(0);
+  const [isLeaveVoiceRecordDialogOpen, setIsLeaveVoiceRecordDialogOpen] = useState(false);
+  const [pendingWorkspaceTab, setPendingWorkspaceTab] = useState<WorkspaceTab | null>(null);
   const [settings, setSettings] = useState<ConversionSettings>({
     format: "mp4",
     sensorType: "beep",
@@ -182,6 +198,37 @@ export default function App() {
       ...nextSettings,
       audioOnly: true,
     });
+  };
+
+  const handleWorkspaceTabChange = (value: string) => {
+    const nextTab = value as WorkspaceTab;
+
+    if (
+      activeWorkspaceTab === "voice-record"
+      && nextTab !== "voice-record"
+      && voiceRecorderStatus.isRecording
+      && !voiceRecorderStatus.isPaused
+    ) {
+      setPendingWorkspaceTab(nextTab);
+      setPauseRecorderSignal((current) => current + 1);
+      setIsLeaveVoiceRecordDialogOpen(true);
+      return;
+    }
+
+    setActiveWorkspaceTab(nextTab);
+  };
+
+  const confirmLeaveVoiceRecordTab = () => {
+    if (pendingWorkspaceTab) {
+      setActiveWorkspaceTab(pendingWorkspaceTab);
+    }
+    setPendingWorkspaceTab(null);
+    setIsLeaveVoiceRecordDialogOpen(false);
+  };
+
+  const stayOnVoiceRecordTab = () => {
+    setPendingWorkspaceTab(null);
+    setIsLeaveVoiceRecordDialogOpen(false);
   };
 
   const updateFile = (id: string, changes: Partial<AudioFile>) => {
@@ -683,7 +730,7 @@ export default function App() {
           <div className="space-y-6">
             <Tabs
               value={activeWorkspaceTab}
-              onValueChange={(value: string) => setActiveWorkspaceTab(value as "upload-media" | "upload-url" | "voice-record")}
+              onValueChange={handleWorkspaceTabChange}
               className="space-y-6"
             >
               <TabsList className="w-fit border border-slate-800 bg-slate-900/50">
@@ -742,6 +789,8 @@ export default function App() {
                     <VoiceRecorderPanel
                       onRecordingReady={handleVoiceRecordingAdded}
                       audioFormat={settings.audioFormat}
+                      pauseSignal={pauseRecorderSignal}
+                      onRecordingStateChange={setVoiceRecorderStatus}
                     />
                   </div>
 
@@ -775,6 +824,31 @@ export default function App() {
           <SupportedLanguagesPage />
         )}
       </div>
+
+      <AlertDialog open={isLeaveVoiceRecordDialogOpen} onOpenChange={setIsLeaveVoiceRecordDialogOpen}>
+        <AlertDialogContent className="border-slate-800 bg-slate-950 text-slate-100">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Recording paused</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              Recording was paused automatically. Do you want to switch tabs now?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={stayOnVoiceRecordTab}
+              className="border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white"
+            >
+              Stay here
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmLeaveVoiceRecordTab}
+              className="bg-violet-600 text-white hover:bg-violet-500"
+            >
+              Switch tab
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <footer className="border-t border-slate-800/80 bg-slate-950/40">
         <div className="container mx-auto px-6 py-4 text-center text-sm text-slate-500">
