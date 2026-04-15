@@ -1,10 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
-import { Mic, MicOff, Pause, Play, Square, Upload, X } from "lucide-react";
+import { Mic, MicOff, Pause, Play, Settings, Square, Upload, X } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +35,11 @@ interface VoiceRecorderPanelProps {
 const NEVER_ALLOW_KEY = "voice-record-mic-choice";
 
 type PermissionChoice = "undecided" | "allow-session" | "never";
+type AudioInputOption = {
+  optionId: string;
+  deviceId: string;
+  label: string;
+};
 
 export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: VoiceRecorderPanelProps) {
   const MIN_TRIM_GAP_SECONDS = 0.1;
@@ -37,6 +52,8 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
   });
   const [isCheckingDevices, setIsCheckingDevices] = useState(true);
   const [noMicrophoneFound, setNoMicrophoneFound] = useState(false);
+  const [audioInputOptions, setAudioInputOptions] = useState<AudioInputOption[]>([]);
+  const [selectedAudioInputOptionId, setSelectedAudioInputOptionId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
@@ -97,6 +114,15 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
   };
 
   const selectedAudioFormat = audioFormatMap[audioFormat] || audioFormatMap.mp3;
+
+  const selectedAudioInput = useMemo(() => {
+    if (!audioInputOptions.length) {
+      return null;
+    }
+
+    return audioInputOptions.find((option) => option.optionId === selectedAudioInputOptionId)
+      ?? audioInputOptions[0];
+  }, [audioInputOptions, selectedAudioInputOptionId]);
 
   const ffmpegArgsByFormat: Record<string, string[]> = {
     mp3: ["-c:a", "libmp3lame", "-b:a", "192k"],
@@ -467,27 +493,59 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
     animationFrameRef.current = window.requestAnimationFrame(drawWaveform);
   };
 
+  const refreshAudioInputDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setAudioInputOptions([]);
+      setSelectedAudioInputOptionId("");
+      setNoMicrophoneFound(true);
+      return;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const microphones = devices.filter((device) => device.kind === "audioinput");
+      const options = microphones.map((device, index) => ({
+        optionId: device.deviceId || `audio-input-${index}`,
+        deviceId: device.deviceId,
+        label: device.label || `Microphone ${index + 1}`,
+      }));
+
+      setAudioInputOptions(options);
+      setNoMicrophoneFound(options.length === 0);
+      setSelectedAudioInputOptionId((currentSelection) => {
+        if (currentSelection && options.some((option) => option.optionId === currentSelection)) {
+          return currentSelection;
+        }
+        return options[0]?.optionId ?? "";
+      });
+    } catch {
+      // If enumeration fails, keep the recorder available and handle errors on access.
+      setAudioInputOptions([]);
+      setSelectedAudioInputOptionId("");
+      setNoMicrophoneFound(false);
+    }
+  };
+
   useEffect(() => {
     const checkMicrophoneAvailability = async () => {
-      if (!navigator.mediaDevices?.enumerateDevices) {
-        setNoMicrophoneFound(true);
-        setIsCheckingDevices(false);
-        return;
-      }
-
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasMic = devices.some((device) => device.kind === "audioinput");
-        setNoMicrophoneFound(!hasMic);
-      } catch {
-        // If enumeration fails, keep the recorder available and handle errors on access.
-        setNoMicrophoneFound(false);
+        await refreshAudioInputDevices();
       } finally {
         setIsCheckingDevices(false);
       }
     };
 
     void checkMicrophoneAvailability();
+
+    const handleDeviceChange = () => {
+      void refreshAudioInputDevices();
+    };
+
+    navigator.mediaDevices?.addEventListener?.("devicechange", handleDeviceChange);
+
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handleDeviceChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -630,7 +688,26 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let stream: MediaStream;
+      const selectedDeviceId = selectedAudioInput?.deviceId;
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: selectedDeviceId
+            ? { deviceId: { exact: selectedDeviceId } }
+            : true,
+        });
+      } catch (error) {
+        const err = error as DOMException;
+        if (selectedDeviceId && (err.name === "NotFoundError" || err.name === "OverconstrainedError")) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setSelectedAudioInputOptionId("");
+          toast("Selected microphone is unavailable. Using default input.");
+        } else {
+          throw error;
+        }
+      }
+
       streamRef.current = stream;
       chunksRef.current = [];
       setIsPaused(false);
@@ -734,6 +811,7 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
       setPermissionChoice("allow-session");
+      await refreshAudioInputDevices();
       toast.success("Microphone access allowed for this session.");
     } catch (error) {
       const err = error as DOMException;
@@ -1048,16 +1126,67 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
             ) : permissionChoice === "allow-session" ? (
               <div className="space-y-3">
                 {!isRecording && !previewUrl ? (
-                  <div className="flex items-center justify-center">
-                    <Button
-                      type="button"
-                      onClick={startRecording}
-                      className="h-14 w-14 rounded-full bg-violet-600 p-0 hover:bg-violet-500"
-                      aria-label="Start recording"
-                      title="Start recording"
-                    >
-                      <Mic className="h-6 w-6" />
-                    </Button>
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+                    <div />
+                    <div className="justify-self-center flex flex-col items-center gap-1">
+                      <Button
+                        type="button"
+                        onClick={startRecording}
+                        className="h-14 w-14 rounded-full bg-violet-600 p-0 hover:bg-violet-500"
+                        aria-label="Start recording"
+                        title="Start recording"
+                      >
+                        <Mic className="h-6 w-6" />
+                      </Button>
+                    </div>
+
+                    <div className="justify-self-end flex flex-col items-center gap-1">
+                      <DropdownMenu onOpenChange={(open) => {
+                        if (open) {
+                          void refreshAudioInputDevices();
+                        }
+                      }}>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-14 w-14 rounded-full border-slate-600 bg-slate-900/70 p-0 text-slate-200 hover:bg-slate-800"
+                            aria-label="Microphone settings"
+                            title="Microphone settings"
+                          >
+                            <Settings className="h-5 w-5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="w-[320px] border-slate-700 bg-slate-900 text-slate-100"
+                        >
+                          <DropdownMenuLabel className="text-slate-100">Microphone</DropdownMenuLabel>
+                          <DropdownMenuSeparator className="bg-slate-700" />
+
+                          {audioInputOptions.length > 0 ? (
+                            <DropdownMenuRadioGroup
+                              value={selectedAudioInput?.optionId || audioInputOptions[0].optionId}
+                              onValueChange={setSelectedAudioInputOptionId}
+                            >
+                              {audioInputOptions.map((option) => (
+                                <DropdownMenuRadioItem
+                                  key={option.optionId}
+                                  value={option.optionId}
+                                  className="text-slate-200"
+                                >
+                                  {option.label}
+                                </DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
+                          ) : (
+                            <DropdownMenuItem disabled className="text-slate-400">
+                              No microphone detected
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
                 ) : isRecording ? (
                   <>
@@ -1111,6 +1240,7 @@ export function VoiceRecorderPanel({ onRecordingReady, audioFormat = "mp3" }: Vo
                     </div>
                   </>
                 ) : null}
+
               </div>
             ) : null}
 
