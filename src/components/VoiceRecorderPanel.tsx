@@ -35,6 +35,7 @@ interface VoiceRecorderPanelProps {
 }
 
 const NEVER_ALLOW_KEY = "voice-record-mic-choice";
+const ALLOW_SESSION_KEY = "voice-record-mic-allow-session";
 
 type PermissionChoice = "undecided" | "allow-session" | "never";
 type AudioInputOption = {
@@ -55,7 +56,16 @@ export function VoiceRecorderPanel({
     if (typeof window === "undefined") {
       return "undecided";
     }
-    return localStorage.getItem(NEVER_ALLOW_KEY) === "never" ? "never" : "undecided";
+
+    if (localStorage.getItem(NEVER_ALLOW_KEY) === "never") {
+      return "never";
+    }
+
+    if (sessionStorage.getItem(ALLOW_SESSION_KEY) === "allow-session") {
+      return "allow-session";
+    }
+
+    return "undecided";
   });
   const [isCheckingDevices, setIsCheckingDevices] = useState(true);
   const [noMicrophoneFound, setNoMicrophoneFound] = useState(false);
@@ -797,6 +807,7 @@ export function VoiceRecorderPanel({
       };
 
       recorder.start();
+      sessionStorage.setItem(ALLOW_SESSION_KEY, "allow-session");
       setPermissionChoice("allow-session");
       setIsRecording(true);
       toast.success("Recording started");
@@ -824,6 +835,7 @@ export function VoiceRecorderPanel({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
+      sessionStorage.setItem(ALLOW_SESSION_KEY, "allow-session");
       setPermissionChoice("allow-session");
       await refreshAudioInputDevices();
       toast.success("Microphone access allowed for this session.");
@@ -907,6 +919,7 @@ export function VoiceRecorderPanel({
 
   const setNeverAllow = () => {
     localStorage.setItem(NEVER_ALLOW_KEY, "never");
+    sessionStorage.removeItem(ALLOW_SESSION_KEY);
     setPermissionChoice("never");
 
     if (mediaRecorderRef.current?.state === "recording") {
@@ -924,6 +937,7 @@ export function VoiceRecorderPanel({
 
   const resetPermissionChoice = () => {
     localStorage.removeItem(NEVER_ALLOW_KEY);
+    sessionStorage.removeItem(ALLOW_SESSION_KEY);
     setPermissionChoice("undecided");
     toast.success("Microphone permission choice reset.");
   };
