@@ -178,6 +178,15 @@ export function ProcessingQueue({
     return `Estimated ${formatEta(remainingMs)} left`;
   };
 
+  const toProgressPercent = (value: number) => {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+
+    const normalized = value > 0 && value <= 1 ? value * 100 : value;
+    return Math.max(0, Math.min(normalized, 100));
+  };
+
   const renderAnalysisSection = (
     fileId: string,
     sectionId: string,
@@ -359,14 +368,22 @@ export function ProcessingQueue({
                     {/* Progress Bar */}
                     {file.status === 'processing' && (
                       <div className="space-y-1">
+                        {(() => {
+                          const progressPercent = toProgressPercent(file.progress);
+
+                          return (
+                            <>
                         <Progress 
-                          value={file.progress} 
-                          className="h-1.5 bg-slate-800"
+                          value={progressPercent} 
+                          className="h-2 bg-slate-800/90 ring-1 ring-violet-500/25 [&_[data-slot=progress-indicator]]:bg-gradient-to-r [&_[data-slot=progress-indicator]]:from-violet-500 [&_[data-slot=progress-indicator]]:via-fuchsia-500 [&_[data-slot=progress-indicator]]:to-cyan-400 [&_[data-slot=progress-indicator]]:shadow-[0_0_14px_rgba(139,92,246,0.55)]"
                         />
                         <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-                          <p>{Math.round(file.progress)}% complete</p>
+                          <p>{Math.round(progressPercent)}% complete</p>
                           <p>{getEtaLabel(file)}</p>
                         </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
 

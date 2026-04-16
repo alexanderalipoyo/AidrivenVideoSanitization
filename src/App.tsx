@@ -104,6 +104,15 @@ function shouldForceVideoDownload(mediaUrl: string) {
   }
 }
 
+function normalizeProgressPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  const normalized = value > 0 && value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(normalized, 100));
+}
+
 export default function App() {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [activePage, setActivePage] = useState<"workspace" | "supported-languages">("workspace");
@@ -242,6 +251,7 @@ export default function App() {
   const pollJobUntilComplete = async (fileId: string, jobId: string) => {
     while (true) {
       const job = await fetchJobStatus(jobId);
+      const normalizedProgress = normalizeProgressPercent(job.progress);
       if (job.status === "completed" && job.result) {
         updateFile(fileId, {
           name: job.result.source_title || job.result.source_filename || job.result.output_filename,
@@ -274,13 +284,13 @@ export default function App() {
             return file;
           }
 
-          const nextProgress = Math.max(5, Math.min(job.progress, 99));
+          const nextProgress = Math.max(5, Math.min(normalizedProgress, 99));
 
           return {
             ...file,
             name: job.result?.source_title || file.name,
             status: "processing",
-            progress: nextProgress,
+            progress: Math.max(file.progress, nextProgress),
             processingStartedAt: file.processingStartedAt ?? Date.now(),
             processingBaselineProgress: file.processingBaselineProgress ?? nextProgress,
           };
