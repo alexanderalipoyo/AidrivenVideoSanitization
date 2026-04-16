@@ -905,6 +905,17 @@ export function VoiceRecorderPanel({
     }
   }, [isPaused, isRecording, pauseSignal]);
 
+  useEffect(() => {
+    if (!isRecording || isPaused) {
+      return;
+    }
+
+    // In some renders, the loop starts before the canvas is mounted; restart once mounted.
+    if (analyserRef.current && waveformCanvasRef.current && animationFrameRef.current === null) {
+      startWaveformLoop(waveformHistoryRef.current.length === 0);
+    }
+  }, [isRecording, isPaused]);
+
   const setNeverAllow = () => {
     localStorage.setItem(NEVER_ALLOW_KEY, "never");
     setPermissionChoice("never");
