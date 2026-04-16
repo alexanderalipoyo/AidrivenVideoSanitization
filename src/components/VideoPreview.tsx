@@ -73,6 +73,24 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
     seekToTime(ratio * waveformDuration);
   };
 
+  const pauseOtherPreviewMedia = (activeMedia: HTMLMediaElement) => {
+    const previewMediaElements = document.querySelectorAll(
+      'audio[data-preview-media="true"], video[data-preview-media="true"]',
+    );
+
+    previewMediaElements.forEach((element) => {
+      if (element instanceof HTMLMediaElement && element !== activeMedia && !element.paused) {
+        element.pause();
+      }
+    });
+  };
+
+  const handleMediaPlay = (event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const activeMedia = event.currentTarget;
+    pauseOtherPreviewMedia(activeMedia);
+    setCurrentTime(activeMedia.currentTime);
+  };
+
   const renderSubtitleWords = () => (
     subtitleWords.map((word, index) => {
       const normalizedKey = `${word.start.toFixed(2)}-${word.end.toFixed(2)}-${word.word.trim().toLowerCase()}`;
@@ -314,7 +332,9 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
               ref={videoRef}
               src={mediaUrl}
               controls
+              data-preview-media="true"
               className="w-full h-full object-contain bg-black"
+              onPlay={handleMediaPlay}
               onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
               onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
               onLoadedMetadata={() => setCurrentTime(0)}
@@ -348,7 +368,9 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
               ref={audioRef}
               src={mediaUrl}
               controls
+              data-preview-media="true"
               className="w-full max-w-lg"
+              onPlay={handleMediaPlay}
               onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
               onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
               onLoadedMetadata={() => setCurrentTime(0)}
