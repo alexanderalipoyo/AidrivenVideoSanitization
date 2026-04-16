@@ -128,8 +128,34 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
     seekToTime(time);
   };
 
+  const shouldRenderWaveform = Boolean(mediaUrl) && (isAudio || isVideo);
+
+  const renderWaveformPanel = (showFileName = true) => (
+    <div className="w-full space-y-2">
+      <div
+        className="relative h-44 w-full overflow-hidden rounded-lg border border-cyan-500/30 bg-[#203b79]"
+        onClick={(event) => seekFromWaveformClientX(event.clientX)}
+      >
+        <canvas ref={waveformCanvasRef} className="absolute inset-0 h-full w-full" />
+        {(isWaveformLoading || waveformError || audioWaveformSamples.length === 0) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#1a2c63]/80 px-4 text-center">
+            <p className="text-xs text-slate-300">
+              {isWaveformLoading
+                ? 'Decoding audio waveform...'
+                : waveformError || 'Waveform is unavailable for this source.'}
+            </p>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-slate-400">
+        <span>Click waveform to seek</span>
+        {showFileName ? <span>{file.name}</span> : <span />}
+      </div>
+    </div>
+  );
+
   useEffect(() => {
-    if (!mediaUrl || !isAudio) {
+    if (!mediaUrl || !shouldRenderWaveform) {
       setAudioWaveformSamples([]);
       setAudioWaveformDuration(0);
       setWaveformError(null);
@@ -212,11 +238,11 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
     return () => {
       isDisposed = true;
     };
-  }, [isAudio, mediaUrl]);
+  }, [mediaUrl, shouldRenderWaveform]);
 
   useEffect(() => {
     const canvas = waveformCanvasRef.current;
-    if (!canvas || !isAudio || audioWaveformSamples.length === 0 || waveformDuration <= 0) {
+    if (!canvas || !shouldRenderWaveform || audioWaveformSamples.length === 0 || waveformDuration <= 0) {
       return;
     }
 
@@ -294,7 +320,7 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
   }, [
     audioWaveformSamples,
     currentTime,
-    isAudio,
+    shouldRenderWaveform,
     profaneWordKeys,
     subtitleWords,
     waveformDuration,
@@ -325,44 +351,34 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
         </div>
       )}
       
-      <div className="bg-slate-950 rounded-lg overflow-hidden aspect-video flex items-center justify-center relative">
+      <div className="bg-slate-950 rounded-lg overflow-hidden relative">
         {mediaUrl && isVideo ? (
-          <>
-            <video
-              ref={videoRef}
-              src={mediaUrl}
-              controls
-              data-preview-media="true"
-              className="w-full h-full object-contain bg-black"
-              onPlay={handleMediaPlay}
-              onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-              onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
-              onLoadedMetadata={() => setCurrentTime(0)}
-            />
-            {renderSubtitle()}
-          </>
+          <div className="flex flex-col">
+            <div className="relative aspect-video flex items-center justify-center bg-black">
+              <video
+                ref={videoRef}
+                src={mediaUrl}
+                controls
+                data-preview-media="true"
+                className="w-full h-full object-contain bg-black"
+                onPlay={handleMediaPlay}
+                onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                onLoadedMetadata={() => setCurrentTime(0)}
+              />
+              {renderSubtitle()}
+            </div>
+
+            {!isCensored && (
+              <div className="border-t border-slate-800/70 p-3 md:p-4">
+                {renderWaveformPanel()}
+              </div>
+            )}
+          </div>
         ) : mediaUrl && isAudio ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-4 px-6 text-center">
-            <div className="w-full max-w-4xl space-y-2">
-              <div
-                className="relative h-44 w-full overflow-hidden rounded-lg border border-cyan-500/30 bg-[#203b79]"
-                onClick={(event) => seekFromWaveformClientX(event.clientX)}
-              >
-                <canvas ref={waveformCanvasRef} className="absolute inset-0 h-full w-full" />
-                {(isWaveformLoading || waveformError || audioWaveformSamples.length === 0) && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-[#1a2c63]/80 px-4 text-center">
-                    <p className="text-xs text-slate-300">
-                      {isWaveformLoading
-                        ? 'Decoding audio waveform...'
-                        : waveformError || 'Waveform is unavailable for this source.'}
-                    </p>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>Click waveform to seek</span>
-                <span>{file.name}</span>
-              </div>
+          <div className="w-full flex flex-col items-center justify-center gap-4 px-6 py-6 text-center">
+            <div className="w-full max-w-4xl">
+              {renderWaveformPanel()}
             </div>
             <audio
               ref={audioRef}
@@ -382,7 +398,8 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
             )}
           </div>
         ) : (
-          <div className="text-center space-y-3">
+          <div className="aspect-video flex items-center justify-center">
+            <div className="text-center space-y-3">
             <Video className="w-16 h-16 text-slate-700 mx-auto" />
             <div>
               <p className="text-slate-400 text-sm">
@@ -397,6 +414,7 @@ export function VideoPreview({ file, isCensored = false, showHeader = true }: Vi
                 Sanitized output will appear here when processing completes.
               </p>
             )}
+            </div>
           </div>
         )}
       </div>
